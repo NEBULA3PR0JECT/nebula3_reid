@@ -3,7 +3,7 @@ import PIL.ImageFont as ImageFont
 import numpy as np
 
 
-def show_bboxes(img, bounding_boxes, facial_landmarks=[], plot_conf=False):
+def show_bboxes(img, bounding_boxes, facial_landmarks=[], plot_conf=False, **kwargs):
     """Draw bounding boxes and facial landmarks.
 
     Arguments:
@@ -14,6 +14,11 @@ def show_bboxes(img, bounding_boxes, facial_landmarks=[], plot_conf=False):
     Returns:
         an instance of PIL.Image.
     """
+    if 'resolution_color' in kwargs:
+        bb_color = kwargs.pop('resolution_color')
+    else:
+        bb_color = bounding_boxes.shape[0]*['white']
+
     if plot_conf:
         try:
             font = ImageFont.truetype('arial.ttf', 24)
@@ -24,10 +29,11 @@ def show_bboxes(img, bounding_boxes, facial_landmarks=[], plot_conf=False):
     img_copy = img.copy()
     draw = ImageDraw.Draw(img_copy)
 
-    for b in bounding_boxes:
+    for ix, b in enumerate(bounding_boxes):
+        color_outline = bb_color[ix]
         draw.rectangle([
             (b[0], b[1]), (b[2], b[3])
-        ], outline='white')
+        ], outline=color_outline)
         if plot_conf:
             (left, right, top, bottom) = (b[0], b[2], b[1], b[3])
             display_str_list = str(b[-1].__format__('.2f'))
