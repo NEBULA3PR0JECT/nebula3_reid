@@ -110,7 +110,7 @@ def main():
             continue 
         if '2012' in movie:  #SPARKLE_2012
             continue
-        for clip in os.listdir(os.path.join(movie_folder, movie)):
+        for clip in os.listdir(os.path.join(movie_folder, movie)): #[i[1].keys() for i in ds['BIG_MOMMAS_LIKE_FATHER_LIKE_SON']['characters'].items()]
             vid = clip[clip.rfind('_') + 1:-4]
             if 1: #'.avi' in clip and vid in ds[movie_no_prefix]['videos'].keys():
                 if clips is not None:
@@ -125,6 +125,8 @@ def main():
 
                 for i, frame in enumerate(frames):
                     img = frame.copy()
+                    if 1:
+                        vid = 'DVS37'
                     for char_index, (c, char) in enumerate(ds[movie_no_prefix]['videos'][vid].items()):
                         for k, track in enumerate(char):
                             for bb in [x for x in track if x[0] == i]:
