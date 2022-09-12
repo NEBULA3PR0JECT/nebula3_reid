@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import os
 
-rel_path = 'nebula3_reid/facenet_pytorch'
+rel_path = '/home/hanoch/notebooks/nebula3_reid/facenet_pytorch' # 'nebula3_reid/facenet_pytorch'
 
 workers = 0 if os.name == 'nt' else 4
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')

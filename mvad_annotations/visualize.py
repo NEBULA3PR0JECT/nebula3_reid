@@ -59,6 +59,7 @@ def get_video_frames(filename, mode='RGB'):
 
 
 def main():
+    #             "args": ["--mvad_path", "/mnt/share", "--save_results", "--mvad_names_path", "/home/hanoch/notebooks/nebula3_reid/mvad_annotations/mvad-names.pkl"],
     parser = argparse.ArgumentParser()
     parser.add_argument("--mvad_path", type=str, help="MVAD dataset path", required=True)
     parser.add_argument("--mvad_names_path", type=str, help="MVAD-Names dataset file path", default='mvad-names.pkl')
