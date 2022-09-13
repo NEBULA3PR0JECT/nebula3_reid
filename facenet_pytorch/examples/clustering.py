@@ -16,7 +16,7 @@ transform = T.ToPILImage()
 
 
 def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1, 
-                    min_cluster_size=1, largest_cluster_only=False, metric='euclidean'):
+                    min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean'):
 
  # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
     db = DBSCAN(eps=cluster_threshold, min_samples=min_cluster_size, metric=metric)#, metric='precomputed')
@@ -36,11 +36,12 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
                 print('Cluster {}: {}'.format(i, np.nonzero(labels == i)[0]))
                 if len(np.nonzero(labels == i)[0]) > len(np.nonzero(labels == largest_cluster)[0]):
                     largest_cluster = i
-            print('Saving largest cluster (Cluster: {})'.format(largest_cluster))
-            cnt = 1
-            for i in np.nonzero(labels == largest_cluster)[0]:
-                misc.imsave(os.path.join(out_dir, str(cnt) + '.png'), images[i])
-                cnt += 1
+            if save_images:
+                print('Saving largest cluster (Cluster: {})'.format(largest_cluster))
+                cnt = 1
+                for i in np.nonzero(labels == largest_cluster)[0]:
+                    misc.imsave(os.path.join(out_dir, str(cnt) + '.png'), images[i])
+                    cnt += 1
         else:
             print('Saving all clusters')
             for i in range(no_clusters):
@@ -49,18 +50,20 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
                 path = os.path.join(out_dir, str(i))
                 if not os.path.exists(path):
                     os.makedirs(path)
-                    for j in np.nonzero(labels == i)[0]:
-                        imgp = transform(images[j])
-                        imgp.save(os.path.join(path, str(cnt) + '.png'))
+                    if save_images:
+                        for j in np.nonzero(labels == i)[0]:
+                            imgp = transform(images[j])
+                            imgp.save(os.path.join(path, str(cnt) + '.png'))
 
-                        # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
-                        cnt += 1
+                            # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
+                            cnt += 1
                 else:
-                    for j in np.nonzero(labels == i)[0]:
-                        imgp = transform(images[j])
-                        imgp.save(os.path.join(path, str(cnt) + '.png'))
-                        # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
-                        cnt += 1
+                    if save_images:
+                        for j in np.nonzero(labels == i)[0]:
+                            imgp = transform(images[j])
+                            imgp.save(os.path.join(path, str(cnt) + '.png'))
+                            # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
+                            cnt += 1
 
 
 def face_distance(face_encodings, face_to_compare):

@@ -68,7 +68,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     save_images = True
     # post_process=True => fixed_image_standardization 
     mtcnn = MTCNN(
-        image_size=160, margin=margin, min_face_size=20,
+        image_size=160, margin=margin, min_face_size=64,
         thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all, 
         device=device ) #post_process=False
     # Modify model to VGGFace based and resnet
@@ -186,7 +186,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                         #             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
                         #             lineType=cv2.LINE_AA, org=(10, 40))
                             save_path = os.path.join(result_path_good_resolution_faces, 
-                                                        str(file_inx) + '_prob_' + str(prob[crop_inx]) + '_' + str(face_tens.shape[0]) + '_face_{}'.format(crop_inx) + os.path.basename(file))
+                                                        str(file_inx) + '_prob_' + str(prob[crop_inx].__format__('.2f')) + '_' + str(face_tens.shape[0]) + '_face_{}'.format(crop_inx) + os.path.basename(file))
 
                             cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
                             mtcnn_cropped_image.append(img2)
@@ -242,7 +242,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
         #     all_similar_face_mdf.append(similar_face_mdf)
             
         dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
-                        out_dir=dbscan_result_path, cluster_threshold=0.5, min_cluster_size=5,
+                        out_dir=dbscan_result_path, cluster_threshold=0.2, min_cluster_size=6,
                         metric='cosine')
         if 0:
             sorted_clusters = _chinese_whispers(all_embeddings)
@@ -260,7 +260,7 @@ def main():
     film = '0001_American_Beauty'
     result_path = os.path.join('/home/hanoch/results/face_reid/face_net', film)
     # path_mdf = '/home/hanoch/mdf_lsmdc/all/0011_Gandhi'#'/home/hanoch/mdfs2_lsmdc'
-    if 1:
+    if 0:
         path_mdf = os.path.join('/home/hanoch/mdfs2_lsmdc')
         # path_mdf = '/home/hanoch/notebooks/nebula3_reid/facenet_pytorch/data/test_images'
         # path_mdf = os.path.join('/home/hanoch/temp')
@@ -268,7 +268,7 @@ def main():
         path_mdf = os.path.join('/home/hanoch/mdf_lsmdc/all', film)
     result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
     batch_size = 128
-    margin = 0 #40
+    margin = 40 #40
     min_face_res = 96 #+ margin #64*1.125 + margin # margin is post processing 
     batch_size = batch_size if torch.cuda.is_available() else 0
 
