@@ -25,7 +25,7 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
 
     # get number of clusters
     no_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    
+    clusters = dict()
     print('No of clusters:', no_clusters)
     if no_clusters==0:
         print("Hueston")
@@ -34,6 +34,7 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
             largest_cluster = 0
             for i in range(no_clusters):
                 print('Cluster {}: {}'.format(i, np.nonzero(labels == i)[0]))
+                clusters.update({i:np.nonzero(labels == i)[0]})
                 if len(np.nonzero(labels == i)[0]) > len(np.nonzero(labels == largest_cluster)[0]):
                     largest_cluster = i
             if save_images:
@@ -47,6 +48,7 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
             for i in range(no_clusters):
                 cnt = 1
                 print('Cluster {}: {}'.format(i, np.nonzero(labels == i)[0]))
+                clusters.update({i:np.nonzero(labels == i)[0]})
                 path = os.path.join(out_dir, str(i))
                 if not os.path.exists(path):
                     os.makedirs(path)
@@ -64,7 +66,7 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
                             imgp.save(os.path.join(path, str(cnt) + '.png'))
                             # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
                             cnt += 1
-
+    return clusters
 
 def face_distance(face_encodings, face_to_compare):
     """

@@ -17,7 +17,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import tqdm
+import pickle
 from PIL import Image, ImageDraw
+import PIL.ImageFont as ImageFont
+import PIL.ImageColor as ImageColor
+import matplotlib.colors as mcolors
+
 import cv2
 # test
 # from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
@@ -29,6 +34,77 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 import torchvision.transforms as T
 transform = T.ToPILImage()
+
+
+try:
+    font = ImageFont.truetype('arial.ttf', 24)
+except IOError:
+    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 64) #ImageFont.load_default()
+
+color_space = [ImageColor.getrgb('blue'), ImageColor.getrgb('green'), 
+                ImageColor.getrgb('yellow'), ImageColor.getrgb('red'), 
+                ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
+                ImageColor.getrgb('LightGray'),ImageColor.getrgb('white') ]
+
+def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
+    text_width, text_height = font.getsize('ID - 1')
+    margin = np.ceil(0.05 * text_height)
+
+    for file, ids_desc in mdf_id_all.items():
+        file_path = os.path.join(path_mdf, file)
+        img = Image.open(file_path)
+        img_draw = img.copy()
+        draw = ImageDraw.Draw(img_draw)
+        for ids, bbox_n_id in ids_desc.items():
+            if ids_desc[ids]['id'] !=-1:
+                box = ids_desc[ids]['bbox']
+                draw.rectangle(box.tolist(), width=10, outline=color_space[ids_desc[ids]['id'] % len(color_space)]) # landmark plot
+                margin = np.ceil(0.05 * text_height)
+                draw.text(
+                    (box[0] + margin, box[3] - text_height - margin),
+                    'ID ' + str(ids_desc[ids]['id']),
+                    fill='red',
+                    font=font)
+        img_draw.save(os.path.join(result_path, 're-id_' + os.path.basename(file)))
+    return
+
+def facenet_embeddings(aligned, batch_size, image_size, device, neural_net):
+# FaceNet create embeddings
+    if isinstance(aligned, list):
+        aligned = torch.stack(aligned)
+    elif isinstance(aligned, torch.Tensor):
+        pass
+    else:
+        raise
+    if aligned.shape[0]%batch_size != 0: # all images size are Int multiple of batch size 
+        pad = batch_size - aligned.shape[0]%batch_size
+    else:
+        pad = 0
+    aligned = torch.cat((aligned, torch.zeros((pad, 3, image_size, image_size))), 0)
+    all_embeddings = list()
+    for frame_num in range(int(aligned.shape[0]/batch_size)):
+        with torch.no_grad():
+            if batch_size > 0:
+                # ind = frame_num % batch_size
+                batch_array = aligned[frame_num*batch_size:(frame_num+1)*batch_size, :,:,:]
+                batch_array = batch_array.to(device)
+                embeddings = neural_net(batch_array).detach().cpu()
+                all_embeddings.append(embeddings)
+            else:
+                embeddings = neural_net(batch_array)
+                all_embeddings.append(embeddings)
+    all_embeddings = torch.cat(all_embeddings, 0) #np.concatenate(all_embeddings)
+    all_embeddings = all_embeddings[:all_embeddings.shape[0]-pad,:]
+
+    return all_embeddings
+
+def find_key_given_value(clusters, ix):
+    # [list(clusters.values())[0].tolist().index(ix)]
+    for id, bbox_no in clusters.items():  # for name, age in dictionary.iteritems():  (for Python 2.x)
+        if ix in bbox_no:
+            print('id',id)
+            return id 
+    return -1
 
 
 def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, margin=0, 
@@ -68,7 +144,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     save_images = True
     # post_process=True => fixed_image_standardization 
     mtcnn = MTCNN(
-        image_size=160, margin=margin, min_face_size=64,
+        image_size=160, margin=margin, min_face_size=min_face_res,
         thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all, 
         device=device ) #post_process=False
     # Modify model to VGGFace based and resnet
@@ -99,17 +175,10 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                         if x.endswith('png') or x.endswith('jpg')]
     if filenames is None:
         raise ValueError('No files at that folder')
-
+    
+    mdf_id_all = dict()
     for file_inx, file in enumerate(tqdm.tqdm(filenames)):
         img = Image.open(file)#('images/office1.jpg')
-    # for file_inx, (x, y) in enumerate(loader):
-    #     img = x
-    #     file = dataset.imgs[file_inx][0]
-
-        # if 1:
-        #     img = Image.fromarray(np.array(img)[:, :, ::-1])
-        # if file_inx == 50:
-        #     break
         if detection_with_landmark:
             boxes, probs, points = mtcnn.detect(img, landmarks=True)
             if boxes is not None:
@@ -164,7 +233,13 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
 
 
         else:
-            x_aligned, prob = mtcnn(img, return_prob=True)
+            if 0: # explicit
+                x_aligned, prob = mtcnn(img, return_prob=True)
+            else:
+                batch_boxes, prob, batch_points  = mtcnn.detect(img, landmarks=True)
+                x_aligned = mtcnn.extract(img, batch_boxes, save_path=None) # implicitly saves the faces
+
+            face_id = dict()
             if x_aligned is not None:
                 if len(x_aligned.shape) ==3 :
                     x_aligned = x_aligned.unsqueeze(0)
@@ -175,6 +250,8 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                         face_bb_resolution = 'res_ok'
                         if plot_cropped_faces: # The normalization handles the fixed_image_standardization() built in in MTCNN forward engine
                             img2 = cv2.cvtColor(face_tens, cv2.COLOR_RGB2BGR)  #???? RGB2BGR
+                            img2 = cv2.cvtColor(face_tens, cv2.COLOR_BGR2RGB) # undo 
+                            # img2 = Image.fromarray((face_tens * 255).astype(np.uint8)) 
                             normalizedImg = np.zeros_like(img2)
                             normalizedImg = cv2.normalize(img2, normalizedImg, 0, 255, cv2.NORM_MINMAX)
                             img2 = normalizedImg.astype('uint8')
@@ -191,62 +268,59 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                             cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
                             mtcnn_cropped_image.append(img2)
                         # cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-
                         aligned.append(x_aligned[crop_inx,:,:,:])
-                        names.append(str(file_inx) + '_' + face_bb_resolution + '_'+ 'face_{}'.format(crop_inx) + os.path.basename(file))
-
-
-                # plt.imshow(face_tens)
-                # plt.savefig(os.path.join(result_path, os.path.basename(file)))
+                        fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
+                        names.append(fname)
+                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id' :-1}})
                         print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
-                        # if prob[crop_inx] < 0.95:
-                        #     print('ka')
-            # aligned.append(x_aligned)
-            # names.append(dataset.idx_to_class[y])
-    if 1:
-        # aligned = torch.stack(aligned).to(device)
-        aligned = torch.stack(aligned)
-        if aligned.shape[0]%batch_size != 0: # all images size are Int multiple of batch size 
-            pad = batch_size - aligned.shape[0]%batch_size
-        else:
-            pad = 0
-        aligned = torch.cat((aligned, torch.zeros((pad, 3, mtcnn.image_size, mtcnn.image_size))), 0)
-        all_embeddings = list()
-        for frame_num in range(int(aligned.shape[0]/batch_size)):
-            with torch.no_grad():
-                if batch_size > 0:
-                    # ind = frame_num % batch_size
-                    batch_array = aligned[frame_num*batch_size:(frame_num+1)*batch_size, :,:,:]
-                    batch_array = batch_array.to(device)
-                    embeddings = resnet(batch_array).detach().cpu()
-                    all_embeddings.append(embeddings)
-                else:
-                    embeddings = resnet(batch_array)
-                    all_embeddings.append(embeddings)
-        all_embeddings = torch.cat(all_embeddings, 0) #np.concatenate(all_embeddings)
-        all_embeddings = all_embeddings[:all_embeddings.shape[0]-pad,:]
+                if bool(face_id): # Cases where nonne of the prob>th
+                    mdf_id_all.update({os.path.basename(file):face_id})
+    
+    all_embeddings = facenet_embeddings(aligned, batch_size, 
+                                                    image_size=mtcnn.image_size, device=device, neural_net=resnet)
 
-        # embeddings = resnet(aligned).detach().cpu()
-        ##TODO: try cosine similarity 
-        ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
-        top_k = 3
-        dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
-        # all_similar_face_mdf = list()
-        dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
-        v_top_k, i_topk = torch.topk(-dist_per_face , k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
-        for i in range(all_embeddings.shape[0]):
-            for t in range(top_k):
-                print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
-        # for mdfs_ix in range(all_embeddings.shape[0]):
-        #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
-        #     all_similar_face_mdf.append(similar_face_mdf)
-            
-        dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
-                        out_dir=dbscan_result_path, cluster_threshold=0.2, min_cluster_size=6,
-                        metric='cosine')
-        if 0:
-            sorted_clusters = _chinese_whispers(all_embeddings)
-        # do UMAP/TSNe
+    # embeddings = resnet(aligned).detach().cpu()
+    ##TODO: try cosine similarity 
+    ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
+    top_k = 3
+    dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
+    # all_similar_face_mdf = list()
+    dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
+    v_top_k, i_topk = torch.topk(-dist_per_face , k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
+    for i in range(all_embeddings.shape[0]):
+        for t in range(top_k):
+            print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
+    # for mdfs_ix in range(all_embeddings.shape[0]):
+    #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
+    #     all_similar_face_mdf.append(similar_face_mdf)
+        
+    clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
+                    out_dir=dbscan_result_path, cluster_threshold=0.3, min_cluster_size=6,
+                    metric='cosine')
+    
+    print("total IDs", np.concatenate([x[1] for x in clusters.items()]).shape[0])
+
+    for mdf, id_v in mdf_id_all.items():
+        for k, v in id_v.items():
+            if k in names:
+                ix = names.index(k)
+                id_cluster_no = find_key_given_value(clusters, ix)
+                if id_cluster_no != -1:
+                     mdf_id_all[mdf][k]['id'] = id_cluster_no
+
+
+    with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'wb') as f:
+        pickle.dump(mdf_id_all, f)    
+
+    re_id_result_path = os.path.join(result_path, 're_id')
+    if re_id_result_path and not os.path.exists(re_id_result_path):
+        os.makedirs(re_id_result_path)
+
+    plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)        
+
+    if 0:
+        sorted_clusters = _chinese_whispers(all_embeddings)
+    # do UMAP/TSNe
     
 def classify_min_dist(faces_path, batch_size=128):
     x_aligned = fixed_image_standardization(x_aligned)
@@ -258,6 +332,7 @@ def classify_clustering(faces_path, batch_size=128):
 
 def main():
     film = '0001_American_Beauty'
+    # film = '0011_Gandhi'
     result_path = os.path.join('/home/hanoch/results/face_reid/face_net', film)
     # path_mdf = '/home/hanoch/mdf_lsmdc/all/0011_Gandhi'#'/home/hanoch/mdfs2_lsmdc'
     if 0:
@@ -269,12 +344,18 @@ def main():
     result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
     batch_size = 128
     margin = 40 #40
-    min_face_res = 96 #+ margin #64*1.125 + margin # margin is post processing 
+    min_face_res = 64 #+ margin #64*1.125 + margin # margin is post processing 
+    prob_th_filter_blurr = 0.95
     batch_size = batch_size if torch.cuda.is_available() else 0
 
     features = extract_faces(path_mdf, result_path, result_path_good_resolution_faces, 
-                            margin=margin, batch_size=batch_size, min_face_res=min_face_res)
-    return
+                            margin=margin, batch_size=batch_size, min_face_res=min_face_res,
+                            prob_th_filter_blurr=prob_th_filter_blurr)
+    
+
+    with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'rb') as f:
+        mdf_id_all = pickle.load(f)
+
     all_det_similarity = classify_min_dist(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
     all_det_cluster = classify_clustering(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
 
