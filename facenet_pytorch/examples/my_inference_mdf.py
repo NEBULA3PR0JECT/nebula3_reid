@@ -1,3 +1,4 @@
+from logging import warning
 import sys
 import os
 import copy
@@ -32,6 +33,7 @@ from facenet_pytorch import MTCNN, InceptionResnetV1, extract_face, fixed_image_
 import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets
+from argparse import ArgumentParser
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
@@ -102,14 +104,13 @@ def find_key_given_value(clusters, ix):
     # [list(clusters.values())[0].tolist().index(ix)]
     for id, bbox_no in clusters.items():  # for name, age in dictionary.iteritems():  (for Python 2.x)
         if ix in bbox_no:
-            print('id',id)
             return id 
     return -1
 
 
 def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, margin=0, 
                     batch_size=128, min_face_res = 64,
-                    prob_th_filter_blurr=0.95):
+                    prob_th_filter_blurr=0.95, re_id_method={'method':'dbscan', 'cluster_threshold':0.3}):
     # rel_path = 'nebula3_reid/facenet_pytorch'
 
     # TODO result_path_good_resolution_faces_frontal =  # filter profile
@@ -150,35 +151,258 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     # Modify model to VGGFace based and resnet
     resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
-    # def collate_fn(x):
-    #     return x[0]
-
-    # dataset = datasets.ImageFolder(os.path.join(rel_path, 'data/test_images'))
-    # dataset = datasets.ImageFolder(path_mdf)
-    # dataset.idx_to_class = {i:c for c, i in dataset.class_to_idx.items()}
-    # loader = DataLoader(dataset, collate_fn=collate_fn, num_workers=workers)
-
-
-    if 0:
-        def collate_fn(x):
-            return x[0]
-        workers = 0 if os.name == 'nt' else 4
-        dataset = datasets.ImageFolder(path_mdf)
-        dataset.idx_to_class = {i:c for c, i in dataset.class_to_idx.items()}
-        loader = DataLoader(dataset, collate_fn=collate_fn, num_workers=workers)
-
     aligned = list()
     names = list()
     mtcnn_cropped_image = list()
 
     filenames = [os.path.join(path_mdf, x) for x in os.listdir(path_mdf)
                         if x.endswith('png') or x.endswith('jpg')]
-    if filenames is None:
+    if not bool(filenames):
         raise ValueError('No files at that folder')
     
     mdf_id_all = dict()
     for file_inx, file in enumerate(tqdm.tqdm(filenames)):
-        img = Image.open(file)#('images/office1.jpg')
+        img = Image.open(file)
+        # img_draw = img.copy()
+        # img_draw.save(os.path.join(result_path, str(file_inx) + '_no_faces_' + os.path.basename(file)))
+
+        if 0: # explicit
+            x_aligned, prob = mtcnn(img, return_prob=True)
+        else:
+            try:
+                batch_boxes, prob, lanmarks_points  = mtcnn.detect(img, landmarks=True)
+                x_aligned = mtcnn.extract(img, batch_boxes, save_path=None) # implicitly saves the faces
+            except Exception as ex:
+                print(ex)
+                continue
+
+        face_id = dict()
+        if x_aligned is not None:
+            if len(x_aligned.shape) ==3 :
+                x_aligned = x_aligned.unsqueeze(0)
+                prob = np.array([prob])
+            for crop_inx in range(x_aligned.shape[0]):
+                if prob[crop_inx]>prob_th_filter_blurr:
+                    face_tens = x_aligned[crop_inx,:,:,:].squeeze().permute(1,2,0).cpu().numpy()
+                    face_bb_resolution = 'res_ok'
+                    # for p in lanmarks_points:
+                    #     draw.rectangle((p - 1).tolist() + (p + 1).tolist(), width=2)
+
+                    img2 = cv2.cvtColor(face_tens, cv2.COLOR_RGB2BGR)  #???? RGB2BGR
+                    img2 = cv2.cvtColor(face_tens, cv2.COLOR_BGR2RGB) # undo 
+                    # img2 = Image.fromarray((face_tens * 255).astype(np.uint8)) 
+                    normalizedImg = np.zeros_like(img2)
+                    normalizedImg = cv2.normalize(img2, normalizedImg, 0, 255, cv2.NORM_MINMAX)
+                    img2 = normalizedImg.astype('uint8')
+                    window_name = os.path.basename(file)
+                # cv2.imshow(window_name, img)
+
+                # cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
+                # cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
+                #             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
+                #             lineType=cv2.LINE_AA, org=(10, 40))
+                    save_path = os.path.join(result_path_good_resolution_faces, 
+                                                str(file_inx) + '_prob_' + str(prob[crop_inx].__format__('.2f')) + '_' + str(face_tens.shape[0]) + '_face_{}'.format(crop_inx) + os.path.basename(file))
+                    if plot_cropped_faces: # The normalization handles the fixed_image_standardization() built in in MTCNN forward engine
+                        cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+
+                    mtcnn_cropped_image.append(img2)
+                    # cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+                    aligned.append(x_aligned[crop_inx,:,:,:])
+                    fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
+                    names.append(fname)
+                    face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id' :-1}})
+                    print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
+            if bool(face_id): # Cases where none of the prob>th
+                mdf_id_all.update({os.path.basename(file):face_id})
+    
+    all_embeddings = facenet_embeddings(aligned, batch_size, 
+                                                    image_size=mtcnn.image_size, device=device, neural_net=resnet)
+
+    # embeddings = resnet(aligned).detach().cpu()
+    ##TODO: try cosine similarity 
+    ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
+    if re_id_method['method'] == 'similarity':
+        top_k = 3
+        dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
+        # all_similar_face_mdf = list()
+        dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
+        v_top_k, i_topk = torch.topk(-dist_per_face , k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
+        for i in range(all_embeddings.shape[0]):
+            for t in range(top_k):
+                print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
+        # for mdfs_ix in range(all_embeddings.shape[0]):
+        #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
+        #     all_similar_face_mdf.append(similar_face_mdf)
+    elif re_id_method['method'] == 'dbscan':
+        clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
+                        out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'], 
+                        min_cluster_size=re_id_method['min_cluster_size'], metric='cosine')
+        # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size 
+        n_clusters = len([i[0] for i in clusters.items()])
+    
+        if n_clusters <=2:
+            warning("too few classes ")
+        
+        print("Total {} clusters and total IDs {}".format(n_clusters, 
+                                        np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+    else:
+        raise
+
+    for mdf, id_v in mdf_id_all.items():
+        for k, v in id_v.items():
+            if k in names:
+                ix = names.index(k)
+                id_cluster_no = find_key_given_value(clusters, ix)
+                if id_cluster_no != -1:
+                     mdf_id_all[mdf][k]['id'] = id_cluster_no
+
+    if re_id_method['method'] == 'dbscan':
+        with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
+            pickle.dump(mdf_id_all, f)    
+    else:
+        raise
+
+    re_id_result_path = os.path.join(result_path, 're_id')
+    if re_id_result_path and not os.path.exists(re_id_result_path):
+        os.makedirs(re_id_result_path)
+
+    plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)   
+    
+    return mdf_id_all
+
+    if 0:
+        sorted_clusters = _chinese_whispers(all_embeddings)
+    # do UMAP/TSNe
+    
+def classify_min_dist(faces_path, batch_size=128):
+    x_aligned = fixed_image_standardization(x_aligned)
+    return
+
+def classify_clustering(faces_path, batch_size=128):
+    x_aligned = fixed_image_standardization(x_aligned)
+    return
+
+def main():
+
+    parser = ArgumentParser()
+    parser.add_argument("--path-mdf", type=str, help="MVAD dataset path",  default='/home/hanoch/mdf_lsmdc/all')
+    parser.add_argument("--movie", type=str, help="MVAD-Names dataset file path", default= '3001_21_JUMP_STREET')#default='0001_American_Beauty')
+    # parser.add_argument("--movie", type=str, help="Name of the movie to process.", default=None)
+    # parser.add_argument("--clip", type=str, help="Clip IDs (split by space).", default=None)
+    parser.add_argument("--result-path", type=str, help="", default='/home/hanoch/results/face_reid/face_net')
+    parser.add_argument('--batch-size', type=int, default=128, metavar='INT', help="TODO")
+    parser.add_argument('--mtcnn-margin', type=int, default=40, metavar='INT', help="TODO")
+    parser.add_argument('--min-face-res', type=int, default=64, metavar='INT', help="TODO")
+    parser.add_argument('--cluster-threshold', type=float, default=0.3, metavar='FLOAT', help="TODO")
+    parser.add_argument('--min-cluster-size', type=int, default=6, metavar='INT', help="TODO")
+    parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc'], metavar='STRING',
+                        help='')
+    
+    parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW.csv')
+    
+    args = parser.parse_args()
+
+    # film = '0001_American_Beauty'
+    # film = '0011_Gandhi'
+    result_path = os.path.join(args.result_path, args.movie)
+    # path_mdf = '/home/hanoch/mdf_lsmdc/all/0011_Gandhi'#'/home/hanoch/mdfs2_lsmdc'
+    # if 0:
+    #     path_mdf = os.path.join('/home/hanoch/mdfs2_lsmdc')
+    #     # path_mdf = '/home/hanoch/notebooks/nebula3_reid/facenet_pytorch/data/test_images'
+    #     # path_mdf = os.path.join('/home/hanoch/temp')
+    # else:
+    #     path_mdf = os.path.join('/home/hanoch/mdf_lsmdc/all', film)
+    path_mdf = args.path_mdf
+    path_mdf = os.path.join(path_mdf, args.movie)
+
+    result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
+    batch_size = args.batch_size
+    margin = args.mtcnn_margin
+    min_face_res = args.min_face_res#64 #+ margin #64*1.125 + margin # margin is post processing 
+    prob_th_filter_blurr = 0.95
+    batch_size = batch_size if torch.cuda.is_available() else 0
+    re_id_method = {'method': 'dbscan', 'cluster_threshold':args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
+
+    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_'+ str(re_id_method['min_cluster_size'])
+    if args.task == 'classify_faces':
+        features = extract_faces(path_mdf, result_path, result_path_good_resolution_faces, 
+                                margin=margin, batch_size=batch_size, min_face_res=min_face_res,
+                                prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
+    
+    elif args.task == 'metric_calc':    
+        import pandas as pd
+        result_path = os.path.join(args.result_path, args.movie)
+        result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_'+ str(args.min_cluster_size)
+        with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
+            mdf_face_id_all = pickle.load(f)
+
+        def parse_annotations(annotation_path, mdf_face_id_all):
+
+            df = pd.read_csv(annotation_path, index_col=False)
+            df['movie'] = df['clip'].apply(lambda x: "_".join(x.split('-')[0].split('.')[0].split('_')[:-1]))
+            print("Total No of movies", len(df['movie'].unique()))
+            for movie in df['movie'].unique():
+                for clip in df['clip'][df.movie == movie]:
+                    df['id'][df['clip']==clip]
+                    ids1 = df['id'][df['clip']==clip].item()
+                    ids1 = ids1.replace('[', '')
+                    ids1 = ids1.replace(']', '')
+                    print('ka')
+                return
+
+        def calculate_ap(annotation_path, mdf_face_id_all):
+            parse_annotations(annotation_path, mdf_face_id_all)
+
+            return
+
+        ap = calculate_ap(args.annotation_path, mdf_face_id_all)
+    return
+    with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'rb') as f:
+        mdf_id_all = pickle.load(f)
+
+    all_det_similarity = classify_min_dist(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
+    all_det_cluster = classify_clustering(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
+
+if __name__ == '__main__':
+    main()
+
+
+"""
+def plot_vg_over_image(result, frame_, caption, lprob):
+    import numpy as np
+    print("SoftMax score of the decoder", lprob, lprob.sum())
+    print('Caption: {}'.format(caption))
+    window_name = 'Image'
+    image = np.array(frame_)
+    img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    normalizedImg = np.zeros_like(img)
+    normalizedImg = cv2.normalize(img, normalizedImg, 0, 255, cv2.NORM_MINMAX)
+    img = normalizedImg.astype('uint8')
+
+    image = cv2.rectangle(
+        img,
+        (int(result[0]["box"][0]), int(result[0]["box"][1])),
+        (int(result[0]["box"][2]), int(result[0]["box"][3])),
+        (0, 255, 0),
+        3
+    )
+    # print(caption)
+    movie_id = '111'
+    mdf = '-1'
+    path = './'
+    file = 'pokemon'
+    cv2.imshow(window_name, img)
+
+    cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
+    cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
+                lineType=cv2.LINE_AA, org=(10, 40))
+    fname = str(file) + '_' + str(caption) + '.png'
+    cv2.imwrite(os.path.join(path, fname),
+                image)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+
+
         if detection_with_landmark:
             boxes, probs, points = mtcnn.detect(img, landmarks=True)
             if boxes is not None:
@@ -229,173 +453,5 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                 if save_images:
                     img_draw.save(os.path.join(result_path, str(file_inx) + '_' +os.path.basename(file)))
             else:
-                img_draw.save(os.path.join(result_path, str(file_inx) + '_no_faces_' + os.path.basename(file)))
-
-
-        else:
-            if 0: # explicit
-                x_aligned, prob = mtcnn(img, return_prob=True)
-            else:
-                batch_boxes, prob, batch_points  = mtcnn.detect(img, landmarks=True)
-                x_aligned = mtcnn.extract(img, batch_boxes, save_path=None) # implicitly saves the faces
-
-            face_id = dict()
-            if x_aligned is not None:
-                if len(x_aligned.shape) ==3 :
-                    x_aligned = x_aligned.unsqueeze(0)
-                    prob = np.array([prob])
-                for crop_inx in range(x_aligned.shape[0]):
-                    if prob[crop_inx]>prob_th_filter_blurr:
-                        face_tens = x_aligned[crop_inx,:,:,:].squeeze().permute(1,2,0).cpu().numpy()
-                        face_bb_resolution = 'res_ok'
-                        if plot_cropped_faces: # The normalization handles the fixed_image_standardization() built in in MTCNN forward engine
-                            img2 = cv2.cvtColor(face_tens, cv2.COLOR_RGB2BGR)  #???? RGB2BGR
-                            img2 = cv2.cvtColor(face_tens, cv2.COLOR_BGR2RGB) # undo 
-                            # img2 = Image.fromarray((face_tens * 255).astype(np.uint8)) 
-                            normalizedImg = np.zeros_like(img2)
-                            normalizedImg = cv2.normalize(img2, normalizedImg, 0, 255, cv2.NORM_MINMAX)
-                            img2 = normalizedImg.astype('uint8')
-                            window_name = os.path.basename(file)
-                        # cv2.imshow(window_name, img)
-
-                        # cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
-                        # cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
-                        #             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
-                        #             lineType=cv2.LINE_AA, org=(10, 40))
-                            save_path = os.path.join(result_path_good_resolution_faces, 
-                                                        str(file_inx) + '_prob_' + str(prob[crop_inx].__format__('.2f')) + '_' + str(face_tens.shape[0]) + '_face_{}'.format(crop_inx) + os.path.basename(file))
-
-                            cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-                            mtcnn_cropped_image.append(img2)
-                        # cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-                        aligned.append(x_aligned[crop_inx,:,:,:])
-                        fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
-                        names.append(fname)
-                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id' :-1}})
-                        print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
-                if bool(face_id): # Cases where nonne of the prob>th
-                    mdf_id_all.update({os.path.basename(file):face_id})
-    
-    all_embeddings = facenet_embeddings(aligned, batch_size, 
-                                                    image_size=mtcnn.image_size, device=device, neural_net=resnet)
-
-    # embeddings = resnet(aligned).detach().cpu()
-    ##TODO: try cosine similarity 
-    ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
-    top_k = 3
-    dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
-    # all_similar_face_mdf = list()
-    dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
-    v_top_k, i_topk = torch.topk(-dist_per_face , k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
-    for i in range(all_embeddings.shape[0]):
-        for t in range(top_k):
-            print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
-    # for mdfs_ix in range(all_embeddings.shape[0]):
-    #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
-    #     all_similar_face_mdf.append(similar_face_mdf)
-        
-    clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
-                    out_dir=dbscan_result_path, cluster_threshold=0.3, min_cluster_size=6,
-                    metric='cosine')
-    
-    print("total IDs", np.concatenate([x[1] for x in clusters.items()]).shape[0])
-
-    for mdf, id_v in mdf_id_all.items():
-        for k, v in id_v.items():
-            if k in names:
-                ix = names.index(k)
-                id_cluster_no = find_key_given_value(clusters, ix)
-                if id_cluster_no != -1:
-                     mdf_id_all[mdf][k]['id'] = id_cluster_no
-
-
-    with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'wb') as f:
-        pickle.dump(mdf_id_all, f)    
-
-    re_id_result_path = os.path.join(result_path, 're_id')
-    if re_id_result_path and not os.path.exists(re_id_result_path):
-        os.makedirs(re_id_result_path)
-
-    plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)        
-
-    if 0:
-        sorted_clusters = _chinese_whispers(all_embeddings)
-    # do UMAP/TSNe
-    
-def classify_min_dist(faces_path, batch_size=128):
-    x_aligned = fixed_image_standardization(x_aligned)
-    return
-
-def classify_clustering(faces_path, batch_size=128):
-    x_aligned = fixed_image_standardization(x_aligned)
-    return
-
-def main():
-    film = '0001_American_Beauty'
-    # film = '0011_Gandhi'
-    result_path = os.path.join('/home/hanoch/results/face_reid/face_net', film)
-    # path_mdf = '/home/hanoch/mdf_lsmdc/all/0011_Gandhi'#'/home/hanoch/mdfs2_lsmdc'
-    if 0:
-        path_mdf = os.path.join('/home/hanoch/mdfs2_lsmdc')
-        # path_mdf = '/home/hanoch/notebooks/nebula3_reid/facenet_pytorch/data/test_images'
-        # path_mdf = os.path.join('/home/hanoch/temp')
-    else:
-        path_mdf = os.path.join('/home/hanoch/mdf_lsmdc/all', film)
-    result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
-    batch_size = 128
-    margin = 40 #40
-    min_face_res = 64 #+ margin #64*1.125 + margin # margin is post processing 
-    prob_th_filter_blurr = 0.95
-    batch_size = batch_size if torch.cuda.is_available() else 0
-
-    features = extract_faces(path_mdf, result_path, result_path_good_resolution_faces, 
-                            margin=margin, batch_size=batch_size, min_face_res=min_face_res,
-                            prob_th_filter_blurr=prob_th_filter_blurr)
-    
-
-    with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'rb') as f:
-        mdf_id_all = pickle.load(f)
-
-    all_det_similarity = classify_min_dist(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
-    all_det_cluster = classify_clustering(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
-
-if __name__ == '__main__':
-    main()
-
-
-"""
-def plot_vg_over_image(result, frame_, caption, lprob):
-    import numpy as np
-    print("SoftMax score of the decoder", lprob, lprob.sum())
-    print('Caption: {}'.format(caption))
-    window_name = 'Image'
-    image = np.array(frame_)
-    img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    normalizedImg = np.zeros_like(img)
-    normalizedImg = cv2.normalize(img, normalizedImg, 0, 255, cv2.NORM_MINMAX)
-    img = normalizedImg.astype('uint8')
-
-    image = cv2.rectangle(
-        img,
-        (int(result[0]["box"][0]), int(result[0]["box"][1])),
-        (int(result[0]["box"][2]), int(result[0]["box"][3])),
-        (0, 255, 0),
-        3
-    )
-    # print(caption)
-    movie_id = '111'
-    mdf = '-1'
-    path = './'
-    file = 'pokemon'
-    cv2.imshow(window_name, img)
-
-    cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
-    cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
-                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
-                lineType=cv2.LINE_AA, org=(10, 40))
-    fname = str(file) + '_' + str(caption) + '.png'
-    cv2.imwrite(os.path.join(path, fname),
-                image)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-
 
 """
