@@ -162,7 +162,9 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     
     mdf_id_all = dict()
     for file_inx, file in enumerate(tqdm.tqdm(filenames)):
-        img = Image.open(file)
+        img = Image.open(file) # '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
+        if  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551' in file:
+            print('Hajujuya')
         # img_draw = img.copy()
         # img_draw.save(os.path.join(result_path, str(file_inx) + '_no_faces_' + os.path.basename(file)))
 
@@ -211,7 +213,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                     aligned.append(x_aligned[crop_inx,:,:,:])
                     fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
                     names.append(fname)
-                    face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id' :-1}})
+                    face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id' :-1, 'gt': -1}})
                     print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
             if bool(face_id): # Cases where none of the prob>th
                 mdf_id_all.update({os.path.basename(file):face_id})
@@ -294,12 +296,12 @@ def main():
     parser.add_argument('--batch-size', type=int, default=128, metavar='INT', help="TODO")
     parser.add_argument('--mtcnn-margin', type=int, default=40, metavar='INT', help="TODO")
     parser.add_argument('--min-face-res', type=int, default=64, metavar='INT', help="TODO")
-    parser.add_argument('--cluster-threshold', type=float, default=0.3, metavar='FLOAT', help="TODO")
-    parser.add_argument('--min-cluster-size', type=int, default=6, metavar='INT', help="TODO")
+    parser.add_argument('--cluster-threshold', type=float, default=0.28, metavar='FLOAT', help="TODO")
+    parser.add_argument('--min-cluster-size', type=int, default=5, metavar='INT', help="TODO")
     parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc'], metavar='STRING',
                         help='')
     
-    parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW.csv')
+    parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
     args = parser.parse_args()
 
@@ -339,16 +341,23 @@ def main():
 
         def parse_annotations(annotation_path, mdf_face_id_all):
 
-            df = pd.read_csv(annotation_path, index_col=False)
+            df = pd.read_csv(annotation_path, index_col=False)#, dtype={'id': 'str'})
             df['movie'] = df['clip'].apply(lambda x: "_".join(x.split('-')[0].split('.')[0].split('_')[:-1]))
             print("Total No of movies", len(df['movie'].unique()))
             for movie in df['movie'].unique():
                 for clip in df['clip'][df.movie == movie]:
-                    df['id'][df['clip']==clip]
+                    # df['id'][df['clip']==clip]
                     ids1 = df['id'][df['clip']==clip].item()
                     ids1 = ids1.replace('[', '')
                     ids1 = ids1.replace(']', '')
-                    print('ka')
+                    start = ids1.lower().find('person')
+                    if start != -1:
+                        id_no = int(ids1[start+6:])
+                        clip_key = [key for key, value in mdf_face_id_all.items() if clip.lower() in key.lower()][0]
+                        if not(clip_key):
+                            Warning("No MDF was found although caption based annotations exist", movie, clip)
+                        mdf_face_id_all[clip_key].update({'gt_from_caption': id_no})
+                        print(ids1, id_no)
                 return
 
         def calculate_ap(annotation_path, mdf_face_id_all):
