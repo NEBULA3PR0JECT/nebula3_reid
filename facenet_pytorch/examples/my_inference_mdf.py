@@ -25,6 +25,7 @@ import PIL.ImageColor as ImageColor
 import matplotlib.colors as mcolors
 
 import cv2
+import re
 # test
 # from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
 from examples.clustering import dbscan_cluster, _chinese_whispers
@@ -34,6 +35,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from argparse import ArgumentParser
+from face_reid_util import p_r_plot_multi_class
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
@@ -44,9 +46,104 @@ except IOError:
     font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 64) #ImageFont.load_default()
 
 color_space = [ImageColor.getrgb('blue'), ImageColor.getrgb('green'), 
-                ImageColor.getrgb('yellow'), ImageColor.getrgb('red'), 
+                ImageColor.getrgb('brown'), ImageColor.getrgb('red'),
                 ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
-                ImageColor.getrgb('LightGray'),ImageColor.getrgb('white') ]
+                ImageColor.getrgb('LightGray'),ImageColor.getrgb('white'),
+               ImageColor.getrgb('aliceblue'), ImageColor.getrgb('antiquewhite') ]
+
+not_id = -1
+# [n for n, c in ImageColor.colormap.items()]
+
+# color_cont = [tuple(mcolors.hsv_to_rgb((0.33+(1-x), 1, 255)).astype('int')) for x in np.arange(0, 1, 0.01)]
+
+
+def calculate_ap(annotation_path, mdf_face_id_all, result_path, movie_name):
+    parse_annotations(annotation_path, mdf_face_id_all, movie_name)
+
+    gt_vs_det = dict()
+    for key, ids_desc in mdf_face_id_all.items():
+        if 'gt_from_caption' in ids_desc:
+            gt = ids_desc['gt_from_caption']
+            if len(gt) == 1: # currently dealing with single ID per clip
+                gt = gt[0]
+                predicted = list()
+                for ids, bbox_n_id in ids_desc.items():
+                    if 'id' in ids_desc[ids]:
+                        print(ids_desc[ids]['id'])
+                        if ids_desc[ids]['id'] != -1:
+                            predicted.append(ids_desc[ids]['id'])
+                if not(predicted):
+                    predicted = np.array([not_id]) # class dummy means no ID at all
+                    print('No ID detected though there is GT')
+                else:
+                    predicted = np.unique(predicted)
+                if predicted.shape[0]>1:
+                    print('No unique ID can not tell skip ')
+                    continue
+
+                if gt in gt_vs_det: # for the first time indexing that gt
+                    predicted = np.append(predicted, gt_vs_det[gt])
+                gt_vs_det.update({gt: predicted})
+
+    from collections import Counter
+    most_common = dict()
+    for key, value in gt_vs_det.items():
+        array_det_indecses = gt_vs_det[key][gt_vs_det[key] !=-1]
+        # array_det_indecses = [i[1][i[1] != -1] for i in gt_vs_det.items()][_gt_id]
+        if any(array_det_indecses): # may be no assignment  : Counter([i[1][i[1] != -1] for i in gt_vs_det.items()][0])
+            most_common_detected_index_assigned = Counter(array_det_indecses).most_common(1)[0][0] # take most frequent
+            most_common.update({key: most_common_detected_index_assigned})
+
+    n_classes = np.unique()
+    all_targets = list()
+    all_predictions = list()
+    p_r_plot_multi_class(all_targets, all_predictions, result_path, thresholds_every_in=5, unique_id=None,
+                         classes=[*range(n_classes)])
+
+    return
+
+
+def parse_annotations(annotation_path, mdf_face_id_all, movie_name):
+    df = pd.read_csv(annotation_path, index_col=False)  # , dtype={'id': 'str'})
+    df['movie'] = df['clip'].apply(lambda x: "_".join(x.split('-')[0].split('.')[0].split('_')[:-1]))
+    df = df[df.movie == movie_name]
+    print("Total No of movies", len(df['movie'].unique()))
+    for movie in df['movie'].unique():
+        for clip in df['clip'][df.movie == movie]:
+            print("Movie /clip", movie, clip)
+
+            clip_key = [key for key, value in mdf_face_id_all.items() if clip.lower() in key.lower()]
+            if not (clip_key):
+                Warning("No MDF was found although caption based annotations exist", movie, clip)
+                continue
+            clip_key = clip_key[0]
+            # Parse annotation from CSV can be single or multiple persons per clip = multiple MDFs
+            # df['id'][df['clip']==clip]
+            ids1 = df['id'][df['clip'] == clip].item()
+            ids1 = ids1.replace('[', '')
+            ids1 = ids1.replace(']', '')
+            start_vec = [i.span() for i in re.finditer('person', ids1.lower())]  # [(), ()]
+            if not (start_vec):
+                continue
+
+            commas = [i.span() for i in re.finditer(',', ids1.lower())]
+            commas.append((len(ids1), len(ids1)))  # dummy for last  seperator at the end of 2nd person
+
+            id_no = list()
+            for strt_stop, comma in zip(start_vec, commas):
+                # start = ids1.lower().find('person')
+                start = strt_stop[1]
+
+                # stop = strt_stop[0]
+                if start != -1:
+                    id_no.append(int(ids1[start:comma[0]]))
+                else:
+                    continue
+
+            mdf_face_id_all[clip_key].update({'gt_from_caption': id_no})
+            print(ids1, id_no)
+        return
+
 
 def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
     text_width, text_height = font.getsize('ID - 1')
@@ -64,8 +161,8 @@ def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
                 margin = np.ceil(0.05 * text_height)
                 draw.text(
                     (box[0] + margin, box[3] - text_height - margin),
-                    'ID ' + str(ids_desc[ids]['id']),
-                    fill='red',
+                    str(ids_desc[ids]['id']),
+                    fill='yellow',
                     font=font)
         img_draw.save(os.path.join(result_path, 're-id_' + os.path.basename(file)))
     return
@@ -209,7 +306,8 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                         cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
 
                     mtcnn_cropped_image.append(img2)
-                    # cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+                    if 0:  # save MDFs
+                        cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
                     aligned.append(x_aligned[crop_inx,:,:,:])
                     fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
                     names.append(fname)
@@ -287,9 +385,10 @@ def classify_clustering(faces_path, batch_size=128):
 
 def main():
 
+# '3001_21_JUMP_STREET'--task metric_calc --cluster-threshold 0.3 --min-face-res 72 --min-cluster-size 6
     parser = ArgumentParser()
     parser.add_argument("--path-mdf", type=str, help="MVAD dataset path",  default='/home/hanoch/mdf_lsmdc/all')
-    parser.add_argument("--movie", type=str, help="MVAD-Names dataset file path", default= '3001_21_JUMP_STREET')#default='0001_American_Beauty')
+    parser.add_argument("--movie", type=str, help="MVAD-Names dataset file path", default='0001_American_Beauty')#'3001_21_JUMP_STREET')#default='0001_American_Beauty')
     # parser.add_argument("--movie", type=str, help="Name of the movie to process.", default=None)
     # parser.add_argument("--clip", type=str, help="Clip IDs (split by space).", default=None)
     parser.add_argument("--result-path", type=str, help="", default='/home/hanoch/results/face_reid/face_net')
@@ -339,33 +438,9 @@ def main():
         with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
             mdf_face_id_all = pickle.load(f)
 
-        def parse_annotations(annotation_path, mdf_face_id_all):
 
-            df = pd.read_csv(annotation_path, index_col=False)#, dtype={'id': 'str'})
-            df['movie'] = df['clip'].apply(lambda x: "_".join(x.split('-')[0].split('.')[0].split('_')[:-1]))
-            print("Total No of movies", len(df['movie'].unique()))
-            for movie in df['movie'].unique():
-                for clip in df['clip'][df.movie == movie]:
-                    # df['id'][df['clip']==clip]
-                    ids1 = df['id'][df['clip']==clip].item()
-                    ids1 = ids1.replace('[', '')
-                    ids1 = ids1.replace(']', '')
-                    start = ids1.lower().find('person')
-                    if start != -1:
-                        id_no = int(ids1[start+6:])
-                        clip_key = [key for key, value in mdf_face_id_all.items() if clip.lower() in key.lower()][0]
-                        if not(clip_key):
-                            Warning("No MDF was found although caption based annotations exist", movie, clip)
-                        mdf_face_id_all[clip_key].update({'gt_from_caption': id_no})
-                        print(ids1, id_no)
-                return
+        ap = calculate_ap(args.annotation_path, mdf_face_id_all, result_path, args.movie)
 
-        def calculate_ap(annotation_path, mdf_face_id_all):
-            parse_annotations(annotation_path, mdf_face_id_all)
-
-            return
-
-        ap = calculate_ap(args.annotation_path, mdf_face_id_all)
     return
     with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'rb') as f:
         mdf_id_all = pickle.load(f)
