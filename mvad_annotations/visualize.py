@@ -80,6 +80,8 @@ def main():
 
     if args.movie is not None:
         movies = [args.movie, ]
+    if 1:
+        movies = movies[2:]
 
     for movie in movies:
         assert os.path.exists(os.path.join(movie_folder, movie))

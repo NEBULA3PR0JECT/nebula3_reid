@@ -13,6 +13,16 @@ import time
 import pickle
 import os
 
+import umap
+import umap.plot
+from sklearn.datasets import load_digits
+
+def umap_plot(data):
+    # digits = load_digits()
+
+    mapper = umap.UMAP().fit(data.data)
+    umap.plot.points(mapper, labels=data.target)
+
 def roc_plot(labels, predictions, positive_label, save_dir, thresholds_every=5, unique_id=''):
     # roc_auc_score assumes positive label is 0 namely FINGER_IDX=0 or equivalently positive_label = 1
     # os.environ['DISPLAY'] = str('localhost:10.0')
