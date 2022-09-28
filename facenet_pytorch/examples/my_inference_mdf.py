@@ -26,6 +26,8 @@ import matplotlib.colors as mcolors
 
 import cv2
 import re
+from collections import Counter
+
 # test
 # from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
 from examples.clustering import dbscan_cluster, _chinese_whispers
@@ -40,62 +42,38 @@ import torchvision.transforms as T
 transform = T.ToPILImage()
 
 
-try:
-    font = ImageFont.truetype('arial.ttf', 24)
-except IOError:
-    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 64) #ImageFont.load_default()
-
-color_space = [ImageColor.getrgb('blue'), ImageColor.getrgb('green'), 
-                ImageColor.getrgb('brown'), ImageColor.getrgb('red'),
-                ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
-                ImageColor.getrgb('LightGray'),ImageColor.getrgb('white'),
-               ImageColor.getrgb('aliceblue'), ImageColor.getrgb('antiquewhite') ]
-
-not_id = -1
-# [n for n, c in ImageColor.colormap.items()]
-
-# color_cont = [tuple(mcolors.hsv_to_rgb((0.33+(1-x), 1, 255)).astype('int')) for x in np.arange(0, 1, 0.01)]
-
 class EmbeddingsCollect():
     def __init__(self):
         self.embed = list()
         self.label = list()
         return
 
+try:
+    font = ImageFont.truetype('arial.ttf', 24)
+except IOError:
+    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()
+
+color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][1:] # avoid th aliceblue a light white one
+    # [ImageColor.getrgb('blue'), ImageColor.getrgb('green'),
+    #             ImageColor.getrgb('brown'), ImageColor.getrgb('red'),
+    #             ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
+    #             ImageColor.getrgb('LightGray'),ImageColor.getrgb('white'),
+    #            ImageColor.getrgb('aliceblue'), ImageColor.getrgb('antiquewhite') ]
+
+not_id = -1
+# [n for n, c in ImageColor.colormap.items()]
+
+# color_cont = [tuple(mcolors.hsv_to_rgb((0.33+(1-x), 1, 255)).astype('int')) for x in np.arange(0, 1, 0.01)]
+
 
 def calculate_ap(annotation_path, mdf_face_id_all, result_path, movie_name):
     gt_vs_det, all_no_det_clip_key = parse_annotations_lsmdc(annotation_path, mdf_face_id_all, movie_name)
 
-    # gt_vs_det = dict() # collect the detected IDs only when single PERSONx GT exist,
-    # for key, ids_desc_all_clip_mdfs in mdf_face_id_all.items():
-    #     if 'gt_from_caption' in ids_desc_all_clip_mdfs:
-    #         gt = ids_desc_all_clip_mdfs['gt_from_caption']
-    #         if len(gt) == 1: # currently dealing with single PERSON annotations / ID per LSMDC clip
-    #             gt = gt[0]
-    #             predicted = list()
-    #             for ids, bbox_n_id in ids_desc_all_clip_mdfs.items(): # go over all MDF in LSMDC clip
-    #                 if 'id' in ids_desc_all_clip_mdfs[ids]:
-    #                     print(ids_desc_all_clip_mdfs[ids]['id'])
-    #                     if ids_desc_all_clip_mdfs[ids]['id'] != -1:
-    #                         predicted.append(ids_desc_all_clip_mdfs[ids]['id'])
-    #             if not(predicted):
-    #                 predicted = np.array([not_id]) # class dummy means no ID at all
-    #                 print('No ID detected though there is GT')
-    #             else:
-    #                 predicted = np.unique(predicted)
-    #             if predicted.shape[0]>1:
-    #                 print('No unique ID can not tell skip ')
-    #                 continue
-    #
-    #             if gt in gt_vs_det: # for the first time indexing that gt
-    #                 predicted = np.append(predicted, gt_vs_det[gt])
-    #             gt_vs_det.update({gt: predicted})
-    # most_common : key is PERSON and value is the detected most common Id
-    from collections import Counter
     most_common = dict()
     remove_prev_ids = list()
-    for key, value in gt_vs_det.items(): # TODO remove previous most common from
+    for key, value in gt_vs_det.items():
         array_det_indecses = gt_vs_det[key][gt_vs_det[key] != -1]
+        # remove previous most common from
         for rem_id in remove_prev_ids:
             array_det_indecses = array_det_indecses[array_det_indecses != rem_id]
         # array_det_indecses = [i[1][i[1] != -1] for i in gt_vs_det.items()][_gt_id]
@@ -104,7 +82,7 @@ def calculate_ap(annotation_path, mdf_face_id_all, result_path, movie_name):
             most_common.update({key: most_common_detected_index_assigned})
             remove_prev_ids.append(most_common_detected_index_assigned)
 
-    for key, value in gt_vs_det.items(): # TODO remove previous most common from
+    for key, value in gt_vs_det.items(): #
         lsmdc_person_id = most_common.get(key)
         if lsmdc_person_id is not None:
             ratio_of_the_matching_labels = np.array((value == lsmdc_person_id)).astype('int').sum()/value.shape[0]
@@ -119,11 +97,11 @@ separately compute accuracy over the two subsets of ID pairs (“Same-Acc”,
 “Diff-Acc”) and report the harmonic mean between the two (“Class-Acc”).
 
     """
-    n_classes = np.unique()
-    all_targets = list()
-    all_predictions = list()
-    p_r_plot_multi_class(all_targets, all_predictions, result_path, thresholds_every_in=5, unique_id=None,
-                         classes=[*range(n_classes)])
+    # n_classes = np.unique()
+    # all_targets = list()
+    # all_predictions = list()
+    # p_r_plot_multi_class(all_targets, all_predictions, result_path, thresholds_every_in=5, unique_id=None,
+    #                      classes=[*range(n_classes)])
 
     df_all_no_det_clip_key = pd.DataFrame(all_no_det_clip_key)
     df_all_no_det_clip_key.to_csv(os.path.join(result_path, 'fn_mdf_list.csv'), index=False)
@@ -201,9 +179,8 @@ def parse_annotations_lsmdc(annotation_path, mdf_face_id_all, movie_name):
 
 def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
     text_width, text_height = font.getsize('ID - 1')
-    margin = np.ceil(0.05 * text_height)
 
-    for file, ids_desc_all_clip_mdfs in mdf_id_all.items():
+    for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
         file_path = os.path.join(path_mdf, file)
         img = Image.open(file_path)
         img_draw = img.copy()
@@ -260,8 +237,9 @@ def find_key_given_value(clusters, ix):
 
 
 def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, margin=0, 
-                    batch_size=128, min_face_res = 64,
-                    prob_th_filter_blurr=0.95, re_id_method={'method':'dbscan', 'cluster_threshold':0.3}):
+                    batch_size=128, min_face_res=64,
+                    prob_th_filter_blurr=0.95, re_id_method={'method':'dbscan', 'cluster_threshold': 0.3},
+                    plot_cropped_faces=False):
     # rel_path = 'nebula3_reid/facenet_pytorch'
 
     # TODO result_path_good_resolution_faces_frontal =  # filter profile
@@ -286,7 +264,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     See `help(MTCNN)` for more details.
 
     """
-    plot_cropped_faces = True
+
     detection_with_landmark = False
     if plot_cropped_faces:
         print("FaceNet output is post process : fixed_image_standardization")
@@ -314,16 +292,12 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     mdf_id_all = dict()
     for file_inx, file in enumerate(tqdm.tqdm(filenames)):
         img = Image.open(file) # '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
-        if  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551' in file:
-            print('Hajujuya')
-        # img_draw = img.copy()
-        # img_draw.save(os.path.join(result_path, str(file_inx) + '_no_faces_' + os.path.basename(file)))
 
-        if 0: # explicit
+        if 0: # direct
             x_aligned, prob = mtcnn(img, return_prob=True)
         else:
-            try:
-                batch_boxes, prob, lanmarks_points  = mtcnn.detect(img, landmarks=True)
+            try:# Face landmarks + embeddings of aligned face
+                batch_boxes, prob, lanmarks_points = mtcnn.detect(img, landmarks=True)
                 x_aligned = mtcnn.extract(img, batch_boxes, save_path=None) # implicitly saves the faces
             except Exception as ex:
                 print(ex)
@@ -331,7 +305,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
 
         face_id = dict()
         if x_aligned is not None:
-            if len(x_aligned.shape) ==3 :
+            if len(x_aligned.shape) == 3:
                 x_aligned = x_aligned.unsqueeze(0)
                 prob = np.array([prob])
             for crop_inx in range(x_aligned.shape[0]):
@@ -366,7 +340,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                     fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
                     names.append(fname)
                     face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1}})
-                    print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
+                    # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
             if bool(face_id): # Cases where none of the prob>th
                 mdf_id_all.update({os.path.basename(file):face_id})
     
@@ -381,7 +355,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
         dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
         # all_similar_face_mdf = list()
         dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
-        v_top_k, i_topk = torch.topk(-dist_per_face , k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
+        v_top_k, i_topk = torch.topk(-dist_per_face, k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
         for i in range(all_embeddings.shape[0]):
             for t in range(top_k):
                 print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
@@ -417,9 +391,9 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     if re_id_method['method'] == 'dbscan':
         with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
             pickle.dump(mdf_id_all, f)
-
-        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-            pickle.dump(labeled_embed.embed, f1)
+        if 1:
+            with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                pickle.dump(labeled_embed.embed, f1)
 
         with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
             pickle.dump(labeled_embed.label, f1)
@@ -504,10 +478,15 @@ def main():
         ap = calculate_ap(args.annotation_path, mdf_face_id_all, result_path, args.movie)
 
     elif args.task == 'embeddings_viz_umap':
-        with open(os.path.join(result_path, 'face-id_embeddings_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
-            mdf_face_id_all = pickle.load(f)
+        labeled_embed = EmbeddingsCollect()
 
-        umap_plot()
+        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
+            labeled_embed.embed = pickle.load(f)
+
+        with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
+            labeled_embed.label = pickle.load(f1)
+
+        umap_plot(labeled_embed, result_path)
     elif args.task == 'plot_id_over_mdf':
         with open(os.path.join(result_path,
                                're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(
@@ -529,6 +508,7 @@ if __name__ == '__main__':
 
 
 """
+--task metric_calc --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty
 --task metric_calc --cluster-threshold 0.3 --min-face-res 64 --min-cluster-size 5 --movie '3001_21_JUMP_STREET'
 --task classify_faces --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5
 
