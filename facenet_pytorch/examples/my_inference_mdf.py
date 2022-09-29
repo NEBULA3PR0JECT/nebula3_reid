@@ -15,7 +15,6 @@ directory = os.path.abspath(__file__)
 os.path.abspath(os.path.join(__file__, os.pardir))
 
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import tqdm
 import pickle
@@ -177,7 +176,7 @@ def parse_annotations_lsmdc(annotation_path, mdf_face_id_all, movie_name):
         return gt_vs_det, all_no_det_clip_key
 
 
-def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
+def plot_id_over_mdf(mdf_id_all, result_path, path_mdf, plot_fn=False): # FN plot the IDs that weren't classified
     text_width, text_height = font.getsize('ID - 1')
 
     for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
@@ -186,7 +185,7 @@ def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
         img_draw = img.copy()
         draw = ImageDraw.Draw(img_draw)
         for ids, bbox_n_id in ids_desc_all_clip_mdfs.items():
-            if ids_desc_all_clip_mdfs[ids]['id'] !=-1:
+            if ids_desc_all_clip_mdfs[ids]['id'] != -1:
                 box = ids_desc_all_clip_mdfs[ids]['bbox']
                 draw.rectangle(box.tolist(), width=10, outline=color_space[ids_desc_all_clip_mdfs[ids]['id'] % len(color_space)]) # landmark plot
                 margin = np.ceil(0.05 * text_height)
@@ -195,6 +194,17 @@ def plot_id_over_mdf(mdf_id_all, result_path, path_mdf):
                     str(ids_desc_all_clip_mdfs[ids]['id']),
                     fill='yellow',
                     font=font)
+            elif plot_fn:
+                box = ids_desc_all_clip_mdfs[ids]['bbox']
+                # draw.rectangle(box.tolist(), width=10, outline=color_space[ids_desc_all_clip_mdfs[ids]['id'] % len(color_space)]) # landmark plot
+                draw.rounded_rectangle(box.tolist(), width=10, radius=10, outline=color_space[ids_desc_all_clip_mdfs[ids]['id'] % len(color_space)]) # landmark plot
+                margin = np.ceil(0.05 * text_height)
+                draw.text(
+                    (box[0] + margin, box[3] - text_height - margin),
+                    str(-1),
+                    fill='yellow',
+                    font=font)
+
         img_draw.save(os.path.join(result_path, 're-id_' + os.path.basename(file)))
     return
 
@@ -249,10 +259,6 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
 
     if result_path_good_resolution_faces and not os.path.exists(result_path_good_resolution_faces):
         os.makedirs(result_path_good_resolution_faces)
-
-    dbscan_result_path = os.path.join(result_path, 'dbscan')
-    if dbscan_result_path and not os.path.exists(dbscan_result_path):
-        os.makedirs(dbscan_result_path)
 
     workers = 0 if os.name == 'nt' else 4
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -309,8 +315,8 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                 x_aligned = x_aligned.unsqueeze(0)
                 prob = np.array([prob])
             for crop_inx in range(x_aligned.shape[0]):
-                if prob[crop_inx]>prob_th_filter_blurr:
-                    face_tens = x_aligned[crop_inx,:,:,:].squeeze().permute(1,2,0).cpu().numpy()
+                if prob[crop_inx] > prob_th_filter_blurr:
+                    face_tens = x_aligned[crop_inx, :, :, :].squeeze().permute(1, 2, 0).cpu().numpy()
                     face_bb_resolution = 'res_ok'
                     # for p in lanmarks_points:
                     #     draw.rectangle((p - 1).tolist() + (p + 1).tolist(), width=2)
@@ -347,9 +353,17 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     all_embeddings = facenet_embeddings(aligned, batch_size, 
                                                     image_size=mtcnn.image_size, device=device, neural_net=resnet)
 
+    return all_embeddings, mtcnn_cropped_image, names, mdf_id_all
     # embeddings = resnet(aligned).detach().cpu()
     ##TODO: try cosine similarity 
     ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
+def re_identification(all_embeddings, mtcnn_cropped_image, names,
+                    re_id_method, mdf_id_all, result_path):
+
+    dbscan_result_path = os.path.join(result_path, 'dbscan')
+    if dbscan_result_path and not os.path.exists(dbscan_result_path):
+        os.makedirs(dbscan_result_path)
+
     if re_id_method['method'] == 'similarity':
         top_k = 3
         dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
@@ -363,16 +377,16 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
         #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
         #     all_similar_face_mdf.append(similar_face_mdf)
     elif re_id_method['method'] == 'dbscan':
-        clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings, 
-                        out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'], 
+        clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings,
+                        out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
                         min_cluster_size=re_id_method['min_cluster_size'], metric='cosine')
-        # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size 
+        # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
         n_clusters = len([i[0] for i in clusters.items()])
-    
+
         if n_clusters <= 2:
             warning("too few classes ")
-        
-        print("Total {} clusters and total IDs {}".format(n_clusters, 
+
+        print("Total {} clusters and total IDs {}".format(n_clusters,
                                         np.concatenate([x[1] for x in clusters.items()]).shape[0]))
     else:
         raise
@@ -388,26 +402,8 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                     labeled_embed.embed.append(all_embeddings[ix])
                     labeled_embed.label.append(id_cluster_no)
 
-    if re_id_method['method'] == 'dbscan':
-        with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
-            pickle.dump(mdf_id_all, f)
-        if 1:
-            with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-                pickle.dump(labeled_embed.embed, f1)
+    return mdf_id_all, labeled_embed
 
-        with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-            pickle.dump(labeled_embed.label, f1)
-
-    else:
-        raise
-
-    re_id_result_path = os.path.join(result_path, 're_id')
-    if re_id_result_path and not os.path.exists(re_id_result_path):
-        os.makedirs(re_id_result_path)
-
-    plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
-
-    return mdf_id_all
 
     if 0:
         sorted_clusters = _chinese_whispers(all_embeddings)
@@ -442,16 +438,7 @@ def main():
     
     args = parser.parse_args()
 
-    # film = '0001_American_Beauty'
-    # film = '0011_Gandhi'
     result_path = os.path.join(args.result_path, args.movie)
-    # path_mdf = '/home/hanoch/mdf_lsmdc/all/0011_Gandhi'#'/home/hanoch/mdfs2_lsmdc'
-    # if 0:
-    #     path_mdf = os.path.join('/home/hanoch/mdfs2_lsmdc')
-    #     # path_mdf = '/home/hanoch/notebooks/nebula3_reid/facenet_pytorch/data/test_images'
-    #     # path_mdf = os.path.join('/home/hanoch/temp')
-    # else:
-    #     path_mdf = os.path.join('/home/hanoch/mdf_lsmdc/all', film)
     path_mdf = args.path_mdf
     path_mdf = os.path.join(path_mdf, args.movie)
 
@@ -465,9 +452,32 @@ def main():
 
     result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_'+ str(re_id_method['min_cluster_size'])
     if args.task == 'classify_faces':
-        features = extract_faces(path_mdf, result_path, result_path_good_resolution_faces, 
-                                margin=margin, batch_size=batch_size, min_face_res=min_face_res,
-                                prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
+        all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf, result_path, result_path_good_resolution_faces,
+                                                                margin=margin, batch_size=batch_size, min_face_res=min_face_res,
+                                                                prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
+
+        mdf_id_all, labeled_embed = re_identification(all_embeddings, mtcnn_cropped_image, names, re_id_method, mdf_id_all, result_path)
+
+        if re_id_method['method'] == 'dbscan':
+            with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
+                pickle.dump(mdf_id_all, f)
+            if 1:
+                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.embed, f1)
+
+            with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                pickle.dump(labeled_embed.label, f1)
+
+        else:
+            raise
+
+        re_id_result_path = os.path.join(result_path, 're_id')
+        if re_id_result_path and not os.path.exists(re_id_result_path):
+            os.makedirs(re_id_result_path)
+
+        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
+
+
     
     elif args.task == 'metric_calc':    
         import pandas as pd
@@ -486,7 +496,62 @@ def main():
         with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
             labeled_embed.label = pickle.load(f1)
 
+        plot_fn = True
+        if plot_fn:
+            import pandas as pd
+            path_fn = '/home/hanoch/notebooks/nebula3_reid/annotations/FN_0001_American_Beauty.csv'
+            df = pd.read_csv(path_fn, index_col=False)  # , dtype={'id': 'str'})
+            df.dropna(axis='columns')
+            mdf_path = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
+            id_fn = 1
+            print("FN IDs is ", df[df['id'] == id_fn]['id_name'].unique())
+            if 0:
+                import subprocess
+                if path_mdf is None:
+                    raise
+                for reid_fname in df[df['id'] == 1]['mdf']:  # Kevin Spacy
+                    fname = reid_fname.split('re-id_')[-1]
+                    file_full_path = subprocess.getoutput('find ' + path_mdf + ' -iname ' + '"*' + fname + '*"')
+                    if not file_full_path:
+                        print("File not found", fname)
+                    dest_path = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
+                    subprocess.getoutput('cp -p ' + file_full_path + ' ' + dest_path)
+
+            result_path_fn = os.path.join(mdf_path, 'face_rec')
+            if result_path_fn and not os.path.exists(result_path_fn):
+                os.makedirs(result_path_fn)
+
+            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf=mdf_path, result_path=result_path_fn,
+                                                                                    result_path_good_resolution_faces=result_path_fn,
+                                                                                    margin=margin, batch_size=batch_size,
+                                                                                    min_face_res=min_face_res,
+                                                                                    prob_th_filter_blurr=prob_th_filter_blurr,
+                                                                                    re_id_method=re_id_method['method'],
+                                                                                    plot_cropped_faces=True)
+
+            print("Embeddings of all reID ", len(labeled_embed.embed))
+            # Collect statistics of each ID
+            test_embed = all_embeddings.cpu().numpy()
+            for id_ix in np.sort(np.unique(labeled_embed.label)):
+                id_embed = [labeled_embed.embed[i] for i in id_ix]
+                id_mean = np.mean(np.stack(id_embed), axis=0)
+
+                dist_euc = np.linalg.norm(test_embed - id_mean)
+                cos_dist = 1 - np.sum(test_embed*id_mean)/(np.linalg.norm(test_embed) * np.linalg.norm(id_mean))
+            # Add the unclassified ID
+            fn_unique_label = np.sort(np.unique(labeled_embed.label))[-1] + 1
+            for ix in range(all_embeddings.shape[0]):
+                labeled_embed.embed.append(all_embeddings[ix])
+                labeled_embed.label.append(fn_unique_label)
+
+
+            print("total embeddings of all reID and FN ",len(labeled_embed.embed))
+            # FN class Already known no need for re-id
+            result_path = result_path_fn
+
+            id_ix = np.where(np.array(labeled_embed.label) == id_fn)[0]
         umap_plot(labeled_embed, result_path)
+
     elif args.task == 'plot_id_over_mdf':
         with open(os.path.join(result_path,
                                're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(
@@ -494,7 +559,17 @@ def main():
             mdf_face_id_all = pickle.load(f)
 
         re_id_result_path = os.path.join(result_path, 're_id')
-        plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
+        if 1:
+            re_id_result_path = os.path.join(result_path, 're_id_fn')
+
+            if re_id_result_path and not os.path.exists(re_id_result_path):
+                os.makedirs(re_id_result_path)
+
+            plot_fn = True
+            plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
+        else:
+            plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
+
 
     return
 

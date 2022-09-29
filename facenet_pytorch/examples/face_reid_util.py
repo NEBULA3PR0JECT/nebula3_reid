@@ -23,6 +23,7 @@ def umap_plot(labeled_embed, result_path):
     n_neighbors = 5 #This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50, with a choice of 10 to 15 being a sensible default.
     import umap
     import umap.plot
+
     mapper = umap.UMAP(n_neighbors=n_neighbors,
                       min_dist=min_dist,
                       metric=metric).fit(np.stack(labeled_embed.embed))
