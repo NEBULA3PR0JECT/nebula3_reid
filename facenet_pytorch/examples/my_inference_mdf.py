@@ -52,7 +52,7 @@ try:
 except IOError:
     font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()
 
-color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][1:] # avoid th aliceblue a light white one
+color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
     # [ImageColor.getrgb('blue'), ImageColor.getrgb('green'),
     #             ImageColor.getrgb('brown'), ImageColor.getrgb('red'),
     #             ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
@@ -64,6 +64,15 @@ not_id = -1
 
 # color_cont = [tuple(mcolors.hsv_to_rgb((0.33+(1-x), 1, 255)).astype('int')) for x in np.arange(0, 1, 0.01)]
 
+
+def calculateMahalanobis(y, inv_covmat, y_mu):
+    y_mu = y - y_mu
+    # if not cov:
+    #     cov = np.cov(data.values.T)
+    # inv_covmat = np.linalg.inv(cov)
+    left = np.dot(y_mu, inv_covmat)
+    mahal = np.dot(left, y_mu.T)
+    return mahal.diagonal()
 
 def calculate_ap(annotation_path, mdf_face_id_all, result_path, movie_name):
     gt_vs_det, all_no_det_clip_key = parse_annotations_lsmdc(annotation_path, mdf_face_id_all, movie_name)
@@ -284,7 +293,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
         thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all, 
         device=device ) #post_process=False
     # Modify model to VGGFace based and resnet
-    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device) # TODO
 
     aligned = list()
     names = list()
@@ -296,8 +305,8 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
         raise ValueError('No files at that folder')
     
     mdf_id_all = dict()
-    for file_inx, file in enumerate(tqdm.tqdm(filenames)):
-        img = Image.open(file) # '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
+    for file_inx, file in enumerate(tqdm.tqdm(sorted(filenames))):
+        img = Image.open(file) #print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
 
         if 0: # direct
             x_aligned, prob = mtcnn(img, return_prob=True)
@@ -343,7 +352,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
                     if 0:  # save MDFs
                         cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
                     aligned.append(x_aligned[crop_inx,:,:,:])
-                    fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + os.path.basename(file)
+                    fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
                     names.append(fname)
                     face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1}})
                     # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
@@ -358,7 +367,7 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
     ##TODO: try cosine similarity 
     ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
 def re_identification(all_embeddings, mtcnn_cropped_image, names,
-                    re_id_method, mdf_id_all, result_path):
+                    re_id_method, mdf_id_all, result_path, metric='cosine'):
 
     dbscan_result_path = os.path.join(result_path, 'dbscan')
     if dbscan_result_path and not os.path.exists(dbscan_result_path):
@@ -377,9 +386,9 @@ def re_identification(all_embeddings, mtcnn_cropped_image, names,
         #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
         #     all_similar_face_mdf.append(similar_face_mdf)
     elif re_id_method['method'] == 'dbscan':
-        clusters = dbscan_cluster(labels=names, images=mtcnn_cropped_image, matrix=all_embeddings,
+        clusters = dbscan_cluster(labels=None, images=mtcnn_cropped_image, matrix=all_embeddings,
                         out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
-                        min_cluster_size=re_id_method['min_cluster_size'], metric='cosine')
+                        min_cluster_size=re_id_method['min_cluster_size'], metric=metric)
         # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
         n_clusters = len([i[0] for i in clusters.items()])
 
@@ -431,9 +440,17 @@ def main():
     parser.add_argument('--min-face-res', type=int, default=64, metavar='INT', help="TODO")
     parser.add_argument('--cluster-threshold', type=float, default=0.28, metavar='FLOAT', help="TODO")
     parser.add_argument('--min-cluster-size', type=int, default=5, metavar='INT', help="TODO")
-    parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'], metavar='STRING',
+
+
+    parser.add_argument('--simillarity-metric', type=str, default='cosine',
+                        choices=['cosine', 'euclidean'],
+                        metavar='STRING',
                         help='')
-    
+
+    parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'], metavar='STRING',
+                            help='')
+
+
     parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
     args = parser.parse_args()
@@ -450,13 +467,15 @@ def main():
     batch_size = batch_size if torch.cuda.is_available() else 0
     re_id_method = {'method': 'dbscan', 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
-    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_'+ str(re_id_method['min_cluster_size'])
+    # result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_' + str(args.simillarity_metric)
+    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size'])
     if args.task == 'classify_faces':
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf, result_path, result_path_good_resolution_faces,
                                                                 margin=margin, batch_size=batch_size, min_face_res=min_face_res,
                                                                 prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
 
-        mdf_id_all, labeled_embed = re_identification(all_embeddings, mtcnn_cropped_image, names, re_id_method, mdf_id_all, result_path)
+        mdf_id_all, labeled_embed = re_identification(all_embeddings, mtcnn_cropped_image, names,
+                                                      re_id_method, mdf_id_all, result_path, args.simillarity_metric)
 
         if re_id_method['method'] == 'dbscan':
             with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
@@ -496,26 +515,29 @@ def main():
         with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
             labeled_embed.label = pickle.load(f1)
 
+        print("similarity based UMAP", args.simillarity_metric)
+
         plot_fn = True
         if plot_fn:
             import pandas as pd
-            path_fn = '/home/hanoch/notebooks/nebula3_reid/annotations/FN_0001_American_Beauty.csv'
+            path_fn = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/FN/FN_0001_American_Beauty.csv'#'/home/hanoch/notebooks/nebula3_reid/annotations/FN_0001_American_Beauty.csv'
             df = pd.read_csv(path_fn, index_col=False)  # , dtype={'id': 'str'})
             df.dropna(axis='columns')
-            mdf_path = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
-            id_fn = 1
-            print("FN IDs is ", df[df['id'] == id_fn]['id_name'].unique())
-            if 0:
+            mdf_path = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/FN/mdf' #'/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
+            id_fn_all = np.unique(df['id']) #1 # 1 = kavin
+            print("FN IDs is ", id_fn_all)
+            if 0: # create mdf related database
+                dest_path = mdf_path #'/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
                 import subprocess
                 if path_mdf is None:
                     raise
-                for reid_fname in df[df['id'] == 1]['mdf']:  # Kevin Spacy
-                    fname = reid_fname.split('re-id_')[-1]
-                    file_full_path = subprocess.getoutput('find ' + path_mdf + ' -iname ' + '"*' + fname + '*"')
-                    if not file_full_path:
-                        print("File not found", fname)
-                    dest_path = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/fn'
-                    subprocess.getoutput('cp -p ' + file_full_path + ' ' + dest_path)
+                for id_fn in id_fn_all:
+                    for reid_fname in df[df['id'] == id_fn]['mdf']:  # Kevin Spacy
+                        fname = reid_fname.split('re-id_')[-1]
+                        file_full_path = subprocess.getoutput('find ' + path_mdf + ' -iname ' + '"*' + fname + '*"')
+                        if not file_full_path:
+                            print("File not found", fname)
+                        subprocess.getoutput('cp -p ' + file_full_path + ' ' + dest_path)
 
             result_path_fn = os.path.join(mdf_path, 'face_rec')
             if result_path_fn and not os.path.exists(result_path_fn):
@@ -530,27 +552,67 @@ def main():
                                                                                     plot_cropped_faces=True)
 
             print("Embeddings of all reID ", len(labeled_embed.embed))
-            # Collect statistics of each ID
-            test_embed = all_embeddings.cpu().numpy()
-            for id_ix in np.sort(np.unique(labeled_embed.label)):
-                id_embed = [labeled_embed.embed[i] for i in id_ix]
-                id_mean = np.mean(np.stack(id_embed), axis=0)
 
-                dist_euc = np.linalg.norm(test_embed - id_mean)
-                cos_dist = 1 - np.sum(test_embed*id_mean)/(np.linalg.norm(test_embed) * np.linalg.norm(id_mean))
+            un_clustered_embd = list()
+            un_clustered_lbl = list()
+            for ix in range(len(names)):
+                if np.array([names[ix].split(args.movie)[1] in na for na in names]).astype('int').sum() != 1:
+                    raise ValueError("More than one face per MDF")
             # Add the unclassified ID
             fn_unique_label = np.sort(np.unique(labeled_embed.label))[-1] + 1
             for ix in range(all_embeddings.shape[0]):
-                labeled_embed.embed.append(all_embeddings[ix])
-                labeled_embed.label.append(fn_unique_label)
+                mdf_name_in_csv_loc = np.where([names[ix].split(args.movie)[1] in mdf for mdf in df.mdf])[0]
+                if mdf_name_in_csv_loc.shape[0]!=1:
+                    raise
+                mdf_name_in_csv_loc = mdf_name_in_csv_loc.item()
+                id_class = df.loc[mdf_name_in_csv_loc, 'id']
 
+                un_clustered_embd.append(all_embeddings[ix])
+                un_clustered_lbl.append(id_class)
 
-            print("total embeddings of all reID and FN ",len(labeled_embed.embed))
+                if 1:# dummy class appended to draw UMAP
+                    labeled_embed.embed.append(all_embeddings[ix])
+                    labeled_embed.label.append(fn_unique_label + id_class)
+                    print('Unclustered example added with ID {} aliased to class {}'.format(fn_unique_label + id_class, id_class))
+                else:# true class from csv
+                    labeled_embed.embed.append(all_embeddings[ix])
+                    labeled_embed.label.append(id_class)
+            # pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)
+
+        # Collect statistics of each ID
+        all_centroid = list()
+        all_inv_cov = list()
+        test_embed = all_embeddings.cpu().numpy()
+        for id_ix in np.sort(np.unique(labeled_embed.label)):
+            lbl_ix = np.where([np.array(labeled_embed.label) == id_ix])[1]
+            id_embed = [labeled_embed.embed[i] for i in lbl_ix]
+            id_mean = np.mean(np.stack(id_embed), axis=0)
+
+            all_centroid.append(id_mean)
+            cov = np.cov(np.stack(id_embed).T)
+            inv_convmat = np.linalg.inv(cov)
+
+            all_inv_cov.append(inv_convmat)
+            # dist_euc = np.linalg.norm(test_embed - id_mean)
+            # cos_dist = 1 - np.sum(test_embed*id_mean)/(np.linalg.norm(test_embed) * np.linalg.norm(id_mean))
+
+            # Metric learning assignment
+            for uncluster_id in np.unique(un_clustered_lbl):
+                maha = calculateMahalanobis(y=np.stack(un_clustered_embd)[un_clustered_lbl==uncluster_id, :],
+                                            inv_covmat=inv_convmat, y_mu=id_mean)
+
+            print("total embeddings of all reID and FN ", len(labeled_embed.embed))
             # FN class Already known no need for re-id
             result_path = result_path_fn
+            if 0:
+                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.embed, f1)
 
-            id_ix = np.where(np.array(labeled_embed.label) == id_fn)[0]
-        umap_plot(labeled_embed, result_path)
+                with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.label, f1)
+
+
+        umap_plot(labeled_embed, result_path, metric=args.simillarity_metric)
 
     elif args.task == 'plot_id_over_mdf':
         with open(os.path.join(result_path,

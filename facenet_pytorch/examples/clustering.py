@@ -14,10 +14,12 @@ from sklearn.cluster import DBSCAN
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
-
+# np.where(np.nonzero(db.labels_==0)[0]==457) np.where(np.nonzero(db.labels_==0)[0]==458)
+# pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)
 def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1, 
                     min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean'):
 
+    matrix = matrix.cpu().numpy()
  # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
     db = DBSCAN(eps=cluster_threshold, min_samples=min_cluster_size, metric=metric)#, metric='precomputed')
     db.fit(matrix) #(n_samples, n_features),

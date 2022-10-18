@@ -16,18 +16,26 @@ import os
 
 # from sklearn.datasets import load_digits
 
-def umap_plot(labeled_embed, result_path):
+def umap_plot(labeled_embed, result_path, metric='cosine'):
     # digits = load_digits()
-    metric = 'correlation'
+    # metric = 'correlation'  # "euclidean"
     min_dist = 0.1 # This controls how tightly the embedding is allowed compress points together. Larger values ensure embedded points are more evenly distributed, while smaller values allow the algorithm to optimise more accurately with regard to local structure. Sensible values are in the range 0.001 to 0.5, with 0.1 being a reasonable default.
     n_neighbors = 5 #This determines the number of neighboring points used in local approximations of manifold structure. Larger values will result in more global structure being preserved at the loss of detailed local structure. In general this parameter should often be in the range 5 to 50, with a choice of 10 to 15 being a sensible default.
     import umap
     import umap.plot
+    embed_mat = np.stack(labeled_embed.embed)
+    labels = np.array(labeled_embed.label)
+
+    lbl, c = np.unique(labeled_embed.label, return_counts=True)
+    rmv_labels = np.unique(lbl[c<n_neighbors])
+    ind_rmv = np.concatenate([np.where(labeled_embed.label == rmv_labe)[0] for rmv_labe in rmv_labels])
+    embed_mat = np.delete(embed_mat, ind_rmv, axis=0)
+    labels = np.delete(labels, ind_rmv, axis=0)
 
     mapper = umap.UMAP(n_neighbors=n_neighbors,
                       min_dist=min_dist,
-                      metric=metric).fit(np.stack(labeled_embed.embed))
-    ax = umap.plot.points(mapper, labels=np.array(labeled_embed.label))
+                      metric=metric).fit(embed_mat)
+    ax = umap.plot.points(mapper, labels=labels)
     ax.figure.savefig(os.path.join(result_path, 'metric_' + str(metric) + '_n_neighbors_' + str(n_neighbors) + '_min_dist_' + str(min_dist) + '_umap.pdf'))
 
 def roc_plot(labels, predictions, positive_label, save_dir, thresholds_every=5, unique_id=''):
