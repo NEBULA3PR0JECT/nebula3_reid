@@ -16,7 +16,7 @@ transform = T.ToPILImage()
 
 # np.where(np.nonzero(db.labels_==0)[0]==457) np.where(np.nonzero(db.labels_==0)[0]==458)
 # pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)
-def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1, 
+def dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
                     min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean'):
 
     matrix = matrix.cpu().numpy()
@@ -30,7 +30,8 @@ def dbscan_cluster(labels, images, matrix, out_dir, cluster_threshold=1,
     clusters = dict()
     print('No of clusters:', no_clusters)
     if no_clusters==0:
-        print("Hueston")
+        import warnings
+        warnings.warn("No IDs were found too few embeddings per ID > K of K-NN")
     if no_clusters > 0:
         if largest_cluster_only:
             largest_cluster = 0

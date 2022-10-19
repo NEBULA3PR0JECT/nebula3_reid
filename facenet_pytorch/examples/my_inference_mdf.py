@@ -26,6 +26,7 @@ import matplotlib.colors as mcolors
 import cv2
 import re
 from collections import Counter
+import pandas as pd
 
 # test
 # from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
@@ -53,17 +54,14 @@ except IOError:
     font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()
 
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
-    # [ImageColor.getrgb('blue'), ImageColor.getrgb('green'),
-    #             ImageColor.getrgb('brown'), ImageColor.getrgb('red'),
-    #             ImageColor.getrgb('orange'), ImageColor.getrgb('black'),
-    #             ImageColor.getrgb('LightGray'),ImageColor.getrgb('white'),
-    #            ImageColor.getrgb('aliceblue'), ImageColor.getrgb('antiquewhite') ]
-
 not_id = -1
 # [n for n, c in ImageColor.colormap.items()]
 
-# color_cont = [tuple(mcolors.hsv_to_rgb((0.33+(1-x), 1, 255)).astype('int')) for x in np.arange(0, 1, 0.01)]
+class FaceReId():
+    def __int__(self):
+        self.mdf_path = os.getenv('MDF_PATH_REID', '/mnt/nebula_data/media/frames')
 
+        return
 
 def calculateMahalanobis(y, inv_covmat, y_mu):
     y_mu = y - y_mu
@@ -73,6 +71,23 @@ def calculateMahalanobis(y, inv_covmat, y_mu):
     left = np.dot(y_mu, inv_covmat)
     mahal = np.dot(left, y_mu.T)
     return mahal.diagonal()
+
+def create_result_path_folders(result_path, margin, min_face_res, re_id_method):
+    result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
+    # result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_' + str(args.simillarity_metric)
+    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_' + str(
+        re_id_method['cluster_threshold'])) + '_KNN_' + str(re_id_method['min_cluster_size'])
+
+    if result_path and not os.path.exists(result_path):
+        try:
+            os.makedirs(result_path)
+        except:
+            os.system("sudo mkdir " + result_path)
+
+    if result_path_good_resolution_faces and not os.path.exists(result_path_good_resolution_faces):
+        os.makedirs(result_path_good_resolution_faces)
+    return result_path_good_resolution_faces, result_path
+
 
 def calculate_ap(annotation_path, mdf_face_id_all, result_path, movie_name):
     gt_vs_det, all_no_det_clip_key = parse_annotations_lsmdc(annotation_path, mdf_face_id_all, movie_name)
@@ -263,12 +278,6 @@ def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, marg
 
     # TODO result_path_good_resolution_faces_frontal =  # filter profile
     # plt.savefig('/home/hanoch/notebooks/nebula3_reid/face_tens.png')
-    if result_path and not os.path.exists(result_path):
-        os.makedirs(result_path)
-
-    if result_path_good_resolution_faces and not os.path.exists(result_path_good_resolution_faces):
-        os.makedirs(result_path_good_resolution_faces)
-
     workers = 0 if os.name == 'nt' else 4
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print('Running on device: {}'.format(device))
@@ -386,17 +395,30 @@ def re_identification(all_embeddings, mtcnn_cropped_image, names,
         #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
         #     all_similar_face_mdf.append(similar_face_mdf)
     elif re_id_method['method'] == 'dbscan':
-        clusters = dbscan_cluster(labels=None, images=mtcnn_cropped_image, matrix=all_embeddings,
+        clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
                         out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
                         min_cluster_size=re_id_method['min_cluster_size'], metric=metric)
         # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
         n_clusters = len([i[0] for i in clusters.items()])
 
         if n_clusters <= 2:
-            warning("too few classes ")
-
-        print("Total {} clusters and total IDs {}".format(n_clusters,
+            warning("too few classes/IDs < 2 !!!")
+        if clusters:
+            print("Total {} clusters and total appeared IDs {}".format(n_clusters,
                                         np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+        else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID
+            print("Re run Re-ID : minimal min_cluster_size(K-NN)=1 performance not guaranteed!!!")
+            re_id_method['min_cluster_size'] = 1
+
+            clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
+                            out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
+                            min_cluster_size=re_id_method['min_cluster_size'], metric=metric)
+            # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
+            n_clusters = len([i[0] for i in clusters.items()])
+            if clusters:
+                print("Total {} clusters and total appeared IDs {}".format(n_clusters,
+                                            np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+
     else:
         raise
     labeled_embed = EmbeddingsCollect()
@@ -442,7 +464,7 @@ def main():
     parser.add_argument('--min-cluster-size', type=int, default=5, metavar='INT', help="TODO")
 
 
-    parser.add_argument('--simillarity-metric', type=str, default='cosine',
+    parser.add_argument('--simillarity-metric', type=str, default='cosine',  # TODO not fully implemented
                         choices=['cosine', 'euclidean'],
                         metavar='STRING',
                         help='')
@@ -459,7 +481,6 @@ def main():
     path_mdf = args.path_mdf
     path_mdf = os.path.join(path_mdf, args.movie)
 
-    result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
     batch_size = args.batch_size
     margin = args.mtcnn_margin
     min_face_res = args.min_face_res#64 #+ margin #64*1.125 + margin # margin is post processing 
@@ -467,12 +488,26 @@ def main():
     batch_size = batch_size if torch.cuda.is_available() else 0
     re_id_method = {'method': 'dbscan', 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
-    # result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_' + str(args.simillarity_metric)
-    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size'])
+    result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, margin, min_face_res, re_id_method)
+
     if args.task == 'classify_faces':
+        plot_fn = True
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf, result_path, result_path_good_resolution_faces,
                                                                 margin=margin, batch_size=batch_size, min_face_res=min_face_res,
                                                                 prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
+        # Sprint #4 too few MDFs
+        id_to_mdf_ratio = 4
+        delta_thr_sparse_mdfs = 0.1
+        no_mdfs = all_embeddings.shape[0]
+        if no_mdfs < (re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
+            re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), re_id_method['min_cluster_size']))
+            print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(re_id_method['min_cluster_size']))
+            re_id_method['cluster_threshold'] = re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
+            re_id_method['cluster_threshold'] = float("{:.2f}".format(re_id_method['cluster_threshold']))
+
+            print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(re_id_method['cluster_threshold']))
+            result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, margin,
+                                                                                        min_face_res, re_id_method)
 
         mdf_id_all, labeled_embed = re_identification(all_embeddings, mtcnn_cropped_image, names,
                                                       re_id_method, mdf_id_all, result_path, args.simillarity_metric)
@@ -494,12 +529,11 @@ def main():
         if re_id_result_path and not os.path.exists(re_id_result_path):
             os.makedirs(re_id_result_path)
 
-        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
+        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
 
 
     
     elif args.task == 'metric_calc':    
-        import pandas as pd
         with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
             mdf_face_id_all = pickle.load(f)
 
@@ -542,7 +576,7 @@ def main():
             result_path_fn = os.path.join(mdf_path, 'face_rec')
             if result_path_fn and not os.path.exists(result_path_fn):
                 os.makedirs(result_path_fn)
-
+            # Extract embeddinegs for the FN cases
             all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf=mdf_path, result_path=result_path_fn,
                                                                                     result_path_good_resolution_faces=result_path_fn,
                                                                                     margin=margin, batch_size=batch_size,
@@ -570,7 +604,7 @@ def main():
                 un_clustered_embd.append(all_embeddings[ix])
                 un_clustered_lbl.append(id_class)
 
-                if 1:# dummy class appended to draw UMAP
+                if 1:# dummy class appended to draw UMAP in order to differentiate FN embed from clustered
                     labeled_embed.embed.append(all_embeddings[ix])
                     labeled_embed.label.append(fn_unique_label + id_class)
                     print('Unclustered example added with ID {} aliased to class {}'.format(fn_unique_label + id_class, id_class))
@@ -645,6 +679,7 @@ if __name__ == '__main__':
 
 
 """
+--task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40
 --task metric_calc --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty
 --task metric_calc --cluster-threshold 0.3 --min-face-res 64 --min-cluster-size 5 --movie '3001_21_JUMP_STREET'
 --task classify_faces --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5
