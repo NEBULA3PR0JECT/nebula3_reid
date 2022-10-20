@@ -96,11 +96,15 @@ class FaceReId:
         if not bool(filenames):
             raise ValueError('No files at that folder')
 
+        status = True
         mdf_id_all = dict()
         for file_inx, file in enumerate(tqdm.tqdm(sorted(filenames))):
-            img = Image.open(
-                file)  # print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
-
+            try:
+                img = Image.open(file)  # print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
+            except Exception as e:
+                print(e)
+                status = False
+                continue
             if 0:  # direct
                 x_aligned, prob = mtcnn(img, return_prob=True)
             else:
@@ -109,6 +113,7 @@ class FaceReId:
                     x_aligned = mtcnn.extract(img, batch_boxes, save_path=None)  # implicitly saves the faces
                 except Exception as ex:
                     print(ex)
+                    status = False
                     continue
 
             face_id = dict()
@@ -160,7 +165,7 @@ class FaceReId:
         all_embeddings = facenet_embeddings(aligned, self.batch_size,
                                             image_size=mtcnn.image_size, device=device, neural_net=resnet)
 
-        return all_embeddings, mtcnn_cropped_image, names, mdf_id_all
+        return all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status
         # embeddings = resnet(aligned).detach().cpu()
         ##TODO: try cosine similarity
         ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
@@ -239,7 +244,7 @@ class FaceReId:
             path_mdf = os.path.dirname(path_mdf)
 
         plot_fn = True
-        all_embeddings, mtcnn_cropped_image, names, mdf_id_all = self.extract_faces(path_mdf, result_path_good_resolution_faces)
+        all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
         delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
@@ -276,7 +281,7 @@ class FaceReId:
 
         plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
 
-        return True
+        return status
 
 class EmbeddingsCollect():
     def __init__(self):
@@ -549,14 +554,15 @@ def main():
 
 
     if args.task == 'classify_faces':
-        sucess = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
-        return sucess
+        success = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
+        print("success : ", success)
+        return success
         if 0:
             result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
                                                                                         face_reid.min_face_res,
                                                                                         face_reid.re_id_method)
             plot_fn = True
-            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = face_reid.extract_faces(path_mdf, result_path_good_resolution_faces)
+            all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = face_reid.extract_faces(path_mdf, result_path_good_resolution_faces)
             # Sprint #4 too few MDFs
             id_to_mdf_ratio = 4
             delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
@@ -646,7 +652,7 @@ def main():
             if result_path_fn and not os.path.exists(result_path_fn):
                 os.makedirs(result_path_fn)
             # Extract embeddinegs for the FN cases
-            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = face_reid.extract_faces(path_mdf=mdf_path,
+            all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = face_reid.extract_faces(path_mdf=mdf_path,
                                                                                     result_path_good_resolution_faces=result_path_fn,
                                                                                     plot_cropped_faces=True)
 
