@@ -41,6 +41,242 @@ from face_reid_util import p_r_plot_multi_class, umap_plot
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
+operational_mode = True
+class FaceReId:
+
+    # init method or constructor
+    def __init__(self, margin=40, min_face_res=64, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
+                 simillarity_metric='cosine',
+                 prob_th_filter_blurr=0.95, batch_size=128):
+        self.margin = margin
+        self.min_face_res = min_face_res
+        self.prob_th_filter_blurr = prob_th_filter_blurr
+        self.re_id_method = re_id_method
+        self.batch_size = batch_size
+        self.simillarity_metric = simillarity_metric
+    # Sample Method
+    def extract_faces(self, path_mdf, result_path_good_resolution_faces,
+                      plot_cropped_faces=False):
+        # rel_path = 'nebula3_reid/facenet_pytorch'
+
+        # TODO result_path_good_resolution_faces_frontal =  # filter profile
+        # plt.savefig('/home/hanoch/notebooks/nebula3_reid/face_tens.png')
+        workers = 0 if os.name == 'nt' else 4
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        print('Running on device: {}'.format(device))
+        #### Define MTCNN module
+        """
+        Default params shown for illustration, but not needed. Note that, since MTCNN is a collection of neural nets and other code, the device must be passed in the following way to enable copying of objects when needed internally.
+
+        See `help(MTCNN)` for more details.
+
+        """
+
+        detection_with_landmark = False
+        if plot_cropped_faces:
+            print("FaceNet output is post process : fixed_image_standardization")
+
+        keep_all = True  # HK revert
+
+        save_images = True
+        # post_process=True => fixed_image_standardization
+        mtcnn = MTCNN(
+            image_size=160, margin=self.margin, min_face_size=self.min_face_res,
+            thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all,
+            device=device)  # post_process=False
+        # Modify model to VGGFace based and resnet
+        resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)  # TODO
+
+        aligned = list()
+        names = list()
+        mtcnn_cropped_image = list()
+
+        filenames = [os.path.join(path_mdf, x) for x in os.listdir(path_mdf)
+                     if x.endswith('png') or x.endswith('jpg')]
+        if not bool(filenames):
+            raise ValueError('No files at that folder')
+
+        mdf_id_all = dict()
+        for file_inx, file in enumerate(tqdm.tqdm(sorted(filenames))):
+            img = Image.open(
+                file)  # print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
+
+            if 0:  # direct
+                x_aligned, prob = mtcnn(img, return_prob=True)
+            else:
+                try:  # Face landmarks + embeddings of aligned face
+                    batch_boxes, prob, lanmarks_points = mtcnn.detect(img, landmarks=True)
+                    x_aligned = mtcnn.extract(img, batch_boxes, save_path=None)  # implicitly saves the faces
+                except Exception as ex:
+                    print(ex)
+                    continue
+
+            face_id = dict()
+            if x_aligned is not None:
+                if len(x_aligned.shape) == 3:
+                    x_aligned = x_aligned.unsqueeze(0)
+                    prob = np.array([prob])
+                for crop_inx in range(x_aligned.shape[0]):
+                    if prob[crop_inx] > self.prob_th_filter_blurr:
+                        face_tens = x_aligned[crop_inx, :, :, :].squeeze().permute(1, 2, 0).cpu().numpy()
+                        face_bb_resolution = 'res_ok'
+                        # for p in lanmarks_points:
+                        #     draw.rectangle((p - 1).tolist() + (p + 1).tolist(), width=2)
+
+                        img2 = cv2.cvtColor(face_tens, cv2.COLOR_RGB2BGR)  # ???? RGB2BGR
+                        img2 = cv2.cvtColor(face_tens, cv2.COLOR_BGR2RGB)  # undo
+                        # img2 = Image.fromarray((face_tens * 255).astype(np.uint8))
+                        normalizedImg = np.zeros_like(img2)
+                        normalizedImg = cv2.normalize(img2, normalizedImg, 0, 255, cv2.NORM_MINMAX)
+                        img2 = normalizedImg.astype('uint8')
+                        window_name = os.path.basename(file)
+                        # cv2.imshow(window_name, img)
+
+                        # cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
+                        # cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
+                        #             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
+                        #             lineType=cv2.LINE_AA, org=(10, 40))
+                        save_path = os.path.join(result_path_good_resolution_faces,
+                                                 str(file_inx) + '_prob_' + str(
+                                                     prob[crop_inx].__format__('.2f')) + '_' + str(
+                                                     face_tens.shape[0]) + '_face_{}'.format(
+                                                     crop_inx) + os.path.basename(file))
+                        if plot_cropped_faces:  # The normalization handles the fixed_image_standardization() built in in MTCNN forward engine
+                            cv2.imwrite(save_path,
+                                        img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+
+                        mtcnn_cropped_image.append(img2)
+                        if 0:  # save MDFs
+                            cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' + os.path.basename(file)),
+                                        img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
+                        aligned.append(x_aligned[crop_inx, :, :, :])
+                        fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
+                        names.append(fname)
+                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1}})
+                        # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
+                if bool(face_id):  # Cases where none of the prob>th
+                    mdf_id_all.update({os.path.basename(file): face_id})
+
+        all_embeddings = facenet_embeddings(aligned, self.batch_size,
+                                            image_size=mtcnn.image_size, device=device, neural_net=resnet)
+
+        return all_embeddings, mtcnn_cropped_image, names, mdf_id_all
+        # embeddings = resnet(aligned).detach().cpu()
+        ##TODO: try cosine similarity
+        ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
+
+    def re_identification(self, all_embeddings, mtcnn_cropped_image, names,
+                            mdf_id_all, result_path, metric='cosine'):
+
+        dbscan_result_path = os.path.join(result_path, 'dbscan')
+        if dbscan_result_path and not os.path.exists(dbscan_result_path):
+            os.makedirs(dbscan_result_path)
+
+        if self.re_id_method['method'] == 'similarity':
+            top_k = 3
+            dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
+            # all_similar_face_mdf = list()
+            dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
+            v_top_k, i_topk = torch.topk(-dist_per_face, k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
+            for i in range(all_embeddings.shape[0]):
+                for t in range(top_k):
+                    print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
+            # for mdfs_ix in range(all_embeddings.shape[0]):
+            #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
+            #     all_similar_face_mdf.append(similar_face_mdf)
+        elif self.re_id_method['method'] == 'dbscan':
+            clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
+                            out_dir=dbscan_result_path, cluster_threshold=self.re_id_method['cluster_threshold'],
+                            min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric)
+            # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
+            n_clusters = len([i[0] for i in clusters.items()])
+
+            if n_clusters <= 2:
+                warning("too few classes/IDs < 2 !!!")
+            if clusters:
+                print("Total {} clusters and total appeared IDs {}".format(n_clusters,
+                                            np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+            else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID
+                print("Re run Re-ID : Could not find recurrent ID assume single ID per MDF - minimal min_cluster_size(K-NN)=1 performance not guaranteed!!!")
+                self.re_id_method['min_cluster_size'] = 1
+
+                clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
+                                out_dir=dbscan_result_path, cluster_threshold=self.re_id_method['cluster_threshold'],
+                                min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric)
+                # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
+                n_clusters = len([i[0] for i in clusters.items()])
+                if clusters:
+                    print("Total {} clusters and total appeared IDs {}".format(n_clusters,
+                                                np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+
+        else:
+            raise
+        labeled_embed = EmbeddingsCollect()
+
+        for mdf, id_v in mdf_id_all.items():
+            for k, v in id_v.items():
+                if k in names:
+                    ix = names.index(k)
+                    id_cluster_no = find_key_given_value(clusters, ix)
+                    if id_cluster_no != -1:
+                        mdf_id_all[mdf][k]['id'] = id_cluster_no
+                        labeled_embed.embed.append(all_embeddings[ix])
+                        labeled_embed.label.append(id_cluster_no)
+
+        return mdf_id_all, labeled_embed
+
+    def reid_process_movie(self, path_mdf, result_path_with_movie=None):
+
+        if result_path_with_movie is None:
+            result_path_with_movie = '/media/media/services' # default scratch folder for analysis
+            if not (os.path.isdir(result_path_with_movie)):
+                raise ValueError("{} Not mounted hance can not write to that folder ".format(os.path.isdir(result_path_with_movie)))
+        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, self.margin,
+                                                                                    self.min_face_res,
+                                                                                    self.re_id_method)
+
+        if isinstance(path_mdf, list):# pipeline api
+            path_mdf = os.path.dirname(path_mdf)
+
+        plot_fn = True
+        all_embeddings, mtcnn_cropped_image, names, mdf_id_all = self.extract_faces(path_mdf, result_path_good_resolution_faces)
+        # Sprint #4 too few MDFs
+        id_to_mdf_ratio = 4
+        delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
+        no_mdfs = all_embeddings.shape[0]
+        if no_mdfs < (self.re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
+            self.re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), self.re_id_method['min_cluster_size']))
+            print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(self.re_id_method['min_cluster_size']))
+            self.re_id_method['cluster_threshold'] = self.re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
+            self.re_id_method['cluster_threshold'] = float("{:.2f}".format(self.re_id_method['cluster_threshold']))
+
+            print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(self.re_id_method['cluster_threshold']))
+            result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, self.margin,
+                                                                                        self.min_face_res, self.re_id_method)
+
+        mdf_id_all, labeled_embed = self.re_identification(all_embeddings, mtcnn_cropped_image, names,
+                                                                mdf_id_all, result_path, self.simillarity_metric)
+
+        if self.re_id_method['method'] == 'dbscan':
+            with open(os.path.join(result_path, 're-id_res_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
+                pickle.dump(mdf_id_all, f)
+            if 1:
+                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.embed, f1)
+
+            with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                pickle.dump(labeled_embed.label, f1)
+
+        else:
+            raise
+
+        re_id_result_path = os.path.join(result_path, 're_id')
+        if re_id_result_path and not os.path.exists(re_id_result_path):
+            os.makedirs(re_id_result_path)
+
+        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
+
+        return True
 
 class EmbeddingsCollect():
     def __init__(self):
@@ -56,12 +292,6 @@ except IOError:
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
 not_id = -1
 # [n for n, c in ImageColor.colormap.items()]
-
-class FaceReId():
-    def __int__(self):
-        self.mdf_path = os.getenv('MDF_PATH_REID', '/mnt/nebula_data/media/frames')
-
-        return
 
 def calculateMahalanobis(y, inv_covmat, y_mu):
     y_mu = y - y_mu
@@ -270,183 +500,11 @@ def find_key_given_value(clusters, ix):
     return -1
 
 
-def extract_faces(path_mdf, result_path, result_path_good_resolution_faces, margin=0, 
-                    batch_size=128, min_face_res=64,
-                    prob_th_filter_blurr=0.95, re_id_method={'method':'dbscan', 'cluster_threshold': 0.3},
-                    plot_cropped_faces=False):
-    # rel_path = 'nebula3_reid/facenet_pytorch'
-
-    # TODO result_path_good_resolution_faces_frontal =  # filter profile
-    # plt.savefig('/home/hanoch/notebooks/nebula3_reid/face_tens.png')
-    workers = 0 if os.name == 'nt' else 4
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print('Running on device: {}'.format(device))
-    #### Define MTCNN module
-    """
-    Default params shown for illustration, but not needed. Note that, since MTCNN is a collection of neural nets and other code, the device must be passed in the following way to enable copying of objects when needed internally.
-
-    See `help(MTCNN)` for more details.
-
-    """
-
-    detection_with_landmark = False
-    if plot_cropped_faces:
-        print("FaceNet output is post process : fixed_image_standardization")
-
-    keep_all = True # HK revert
-    
-    save_images = True
-    # post_process=True => fixed_image_standardization 
-    mtcnn = MTCNN(
-        image_size=160, margin=margin, min_face_size=min_face_res,
-        thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all, 
-        device=device ) #post_process=False
-    # Modify model to VGGFace based and resnet
-    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device) # TODO
-
-    aligned = list()
-    names = list()
-    mtcnn_cropped_image = list()
-
-    filenames = [os.path.join(path_mdf, x) for x in os.listdir(path_mdf)
-                        if x.endswith('png') or x.endswith('jpg')]
-    if not bool(filenames):
-        raise ValueError('No files at that folder')
-    
-    mdf_id_all = dict()
-    for file_inx, file in enumerate(tqdm.tqdm(sorted(filenames))):
-        img = Image.open(file) #print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
-
-        if 0: # direct
-            x_aligned, prob = mtcnn(img, return_prob=True)
-        else:
-            try:# Face landmarks + embeddings of aligned face
-                batch_boxes, prob, lanmarks_points = mtcnn.detect(img, landmarks=True)
-                x_aligned = mtcnn.extract(img, batch_boxes, save_path=None) # implicitly saves the faces
-            except Exception as ex:
-                print(ex)
-                continue
-
-        face_id = dict()
-        if x_aligned is not None:
-            if len(x_aligned.shape) == 3:
-                x_aligned = x_aligned.unsqueeze(0)
-                prob = np.array([prob])
-            for crop_inx in range(x_aligned.shape[0]):
-                if prob[crop_inx] > prob_th_filter_blurr:
-                    face_tens = x_aligned[crop_inx, :, :, :].squeeze().permute(1, 2, 0).cpu().numpy()
-                    face_bb_resolution = 'res_ok'
-                    # for p in lanmarks_points:
-                    #     draw.rectangle((p - 1).tolist() + (p + 1).tolist(), width=2)
-
-                    img2 = cv2.cvtColor(face_tens, cv2.COLOR_RGB2BGR)  #???? RGB2BGR
-                    img2 = cv2.cvtColor(face_tens, cv2.COLOR_BGR2RGB) # undo 
-                    # img2 = Image.fromarray((face_tens * 255).astype(np.uint8)) 
-                    normalizedImg = np.zeros_like(img2)
-                    normalizedImg = cv2.normalize(img2, normalizedImg, 0, 255, cv2.NORM_MINMAX)
-                    img2 = normalizedImg.astype('uint8')
-                    window_name = os.path.basename(file)
-                # cv2.imshow(window_name, img)
-
-                # cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
-                # cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
-                #             fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
-                #             lineType=cv2.LINE_AA, org=(10, 40))
-                    save_path = os.path.join(result_path_good_resolution_faces, 
-                                                str(file_inx) + '_prob_' + str(prob[crop_inx].__format__('.2f')) + '_' + str(face_tens.shape[0]) + '_face_{}'.format(crop_inx) + os.path.basename(file))
-                    if plot_cropped_faces: # The normalization handles the fixed_image_standardization() built in in MTCNN forward engine
-                        cv2.imwrite(save_path, img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-
-                    mtcnn_cropped_image.append(img2)
-                    if 0:  # save MDFs
-                        cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' +os.path.basename(file)), img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-                    aligned.append(x_aligned[crop_inx,:,:,:])
-                    fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
-                    names.append(fname)
-                    face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1}})
-                    # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
-            if bool(face_id): # Cases where none of the prob>th
-                mdf_id_all.update({os.path.basename(file):face_id})
-    
-    all_embeddings = facenet_embeddings(aligned, batch_size, 
-                                                    image_size=mtcnn.image_size, device=device, neural_net=resnet)
-
-    return all_embeddings, mtcnn_cropped_image, names, mdf_id_all
-    # embeddings = resnet(aligned).detach().cpu()
-    ##TODO: try cosine similarity 
-    ## TODO : vs GT add threshold -> calc Precision recall infer threshold->run over testset
-def re_identification(all_embeddings, mtcnn_cropped_image, names,
-                    re_id_method, mdf_id_all, result_path, metric='cosine'):
-
-    dbscan_result_path = os.path.join(result_path, 'dbscan')
-    if dbscan_result_path and not os.path.exists(dbscan_result_path):
-        os.makedirs(dbscan_result_path)
-
-    if re_id_method['method'] == 'similarity':
-        top_k = 3
-        dists = [[(e1 - e2).norm().item() for e2 in all_embeddings] for e1 in all_embeddings]
-        # all_similar_face_mdf = list()
-        dist_per_face = torch.from_numpy(np.array(dists).astype('float32'))
-        v_top_k, i_topk = torch.topk(-dist_per_face, k=top_k, dim=1) # topk of -dist is mink of dist idenx 0 is 1 vs. the same 1.
-        for i in range(all_embeddings.shape[0]):
-            for t in range(top_k):
-                print("pairwise match to face {} : {} is {} \n ".format(i, names[i], names[i_topk[i][t]]))
-        # for mdfs_ix in range(all_embeddings.shape[0]):
-        #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
-        #     all_similar_face_mdf.append(similar_face_mdf)
-    elif re_id_method['method'] == 'dbscan':
-        clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
-                        out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
-                        min_cluster_size=re_id_method['min_cluster_size'], metric=metric)
-        # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
-        n_clusters = len([i[0] for i in clusters.items()])
-
-        if n_clusters <= 2:
-            warning("too few classes/IDs < 2 !!!")
-        if clusters:
-            print("Total {} clusters and total appeared IDs {}".format(n_clusters,
-                                        np.concatenate([x[1] for x in clusters.items()]).shape[0]))
-        else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID
-            print("Re run Re-ID : minimal min_cluster_size(K-NN)=1 performance not guaranteed!!!")
-            re_id_method['min_cluster_size'] = 1
-
-            clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
-                            out_dir=dbscan_result_path, cluster_threshold=re_id_method['cluster_threshold'],
-                            min_cluster_size=re_id_method['min_cluster_size'], metric=metric)
-            # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
-            n_clusters = len([i[0] for i in clusters.items()])
-            if clusters:
-                print("Total {} clusters and total appeared IDs {}".format(n_clusters,
-                                            np.concatenate([x[1] for x in clusters.items()]).shape[0]))
-
-    else:
-        raise
-    labeled_embed = EmbeddingsCollect()
-
-    for mdf, id_v in mdf_id_all.items():
-        for k, v in id_v.items():
-            if k in names:
-                ix = names.index(k)
-                id_cluster_no = find_key_given_value(clusters, ix)
-                if id_cluster_no != -1:
-                    mdf_id_all[mdf][k]['id'] = id_cluster_no
-                    labeled_embed.embed.append(all_embeddings[ix])
-                    labeled_embed.label.append(id_cluster_no)
-
-    return mdf_id_all, labeled_embed
 
 
     if 0:
         sorted_clusters = _chinese_whispers(all_embeddings)
     # do UMAP/TSNe
-    
-def classify_min_dist(faces_path, batch_size=128):
-    x_aligned = fixed_image_standardization(x_aligned)
-    return
-
-def classify_clustering(faces_path, batch_size=128):
-    x_aligned = fixed_image_standardization(x_aligned)
-    return
 
 def main():
 
@@ -454,30 +512,22 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--path-mdf", type=str, help="MVAD dataset path",  default='/home/hanoch/mdf_lsmdc/all')
     parser.add_argument("--movie", type=str, help="MVAD-Names dataset file path", default='0001_American_Beauty')#'3001_21_JUMP_STREET')#default='0001_American_Beauty')
-    # parser.add_argument("--movie", type=str, help="Name of the movie to process.", default=None)
-    # parser.add_argument("--clip", type=str, help="Clip IDs (split by space).", default=None)
     parser.add_argument("--result-path", type=str, help="", default='/home/hanoch/results/face_reid/face_net')
     parser.add_argument('--batch-size', type=int, default=128, metavar='INT', help="TODO")
     parser.add_argument('--mtcnn-margin', type=int, default=40, metavar='INT', help="TODO")
     parser.add_argument('--min-face-res', type=int, default=64, metavar='INT', help="TODO")
     parser.add_argument('--cluster-threshold', type=float, default=0.28, metavar='FLOAT', help="TODO")
     parser.add_argument('--min-cluster-size', type=int, default=5, metavar='INT', help="TODO")
-
-
     parser.add_argument('--simillarity-metric', type=str, default='cosine',  # TODO not fully implemented
-                        choices=['cosine', 'euclidean'],
-                        metavar='STRING',
-                        help='')
-
-    parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'], metavar='STRING',
-                            help='')
-
+                        choices=['cosine', 'euclidean'], metavar='STRING', help='')
+    parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'],
+                        metavar='STRING', help='')
 
     parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
     args = parser.parse_args()
 
-    result_path = os.path.join(args.result_path, args.movie)
+    result_path_with_movie = os.path.join(args.result_path, args.movie)
     path_mdf = args.path_mdf
     path_mdf = os.path.join(path_mdf, args.movie)
 
@@ -488,65 +538,84 @@ def main():
     batch_size = batch_size if torch.cuda.is_available() else 0
     re_id_method = {'method': 'dbscan', 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
-    result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, margin, min_face_res, re_id_method)
+    if operational_mode:
+        face_reid = FaceReId()
+    else:
+        face_reid = FaceReId(margin=margin, min_face_res=min_face_res,
+                             re_id_method=re_id_method,
+                             simillarity_metric=args.simillarity_metric,
+                             prob_th_filter_blurr=prob_th_filter_blurr,
+                             batch_size=batch_size)
+
 
     if args.task == 'classify_faces':
-        plot_fn = True
-        all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf, result_path, result_path_good_resolution_faces,
-                                                                margin=margin, batch_size=batch_size, min_face_res=min_face_res,
-                                                                prob_th_filter_blurr=prob_th_filter_blurr, re_id_method=re_id_method)
-        # Sprint #4 too few MDFs
-        id_to_mdf_ratio = 4
-        delta_thr_sparse_mdfs = 0.1
-        no_mdfs = all_embeddings.shape[0]
-        if no_mdfs < (re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
-            re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), re_id_method['min_cluster_size']))
-            print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(re_id_method['min_cluster_size']))
-            re_id_method['cluster_threshold'] = re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
-            re_id_method['cluster_threshold'] = float("{:.2f}".format(re_id_method['cluster_threshold']))
+        sucess = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
+        return sucess
+        if 0:
+            result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
+                                                                                        face_reid.min_face_res,
+                                                                                        face_reid.re_id_method)
+            plot_fn = True
+            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = face_reid.extract_faces(path_mdf, result_path_good_resolution_faces)
+            # Sprint #4 too few MDFs
+            id_to_mdf_ratio = 4
+            delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
+            no_mdfs = all_embeddings.shape[0]
+            if no_mdfs < (face_reid.re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
+                face_reid.re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), face_reid.re_id_method['min_cluster_size']))
+                print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(face_reid.re_id_method['min_cluster_size']))
+                face_reid.re_id_method['cluster_threshold'] = face_reid.re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
+                face_reid.re_id_method['cluster_threshold'] = float("{:.2f}".format(face_reid.re_id_method['cluster_threshold']))
 
-            print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(re_id_method['cluster_threshold']))
-            result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, margin,
-                                                                                        min_face_res, re_id_method)
+                print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(re_id_method['cluster_threshold']))
+                result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, face_reid.margin,
+                                                                                            face_reid.min_face_res, face_reid.re_id_method)
 
-        mdf_id_all, labeled_embed = re_identification(all_embeddings, mtcnn_cropped_image, names,
-                                                      re_id_method, mdf_id_all, result_path, args.simillarity_metric)
+            mdf_id_all, labeled_embed = face_reid.re_identification(all_embeddings, mtcnn_cropped_image, names,
+                                                                    mdf_id_all, result_path, face_reid.simillarity_metric)
 
-        if re_id_method['method'] == 'dbscan':
-            with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
-                pickle.dump(mdf_id_all, f)
-            if 1:
-                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-                    pickle.dump(labeled_embed.embed, f1)
+            if face_reid.re_id_method['method'] == 'dbscan':
+                with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
+                    pickle.dump(mdf_id_all, f)
+                if 1:
+                    with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                        pickle.dump(labeled_embed.embed, f1)
 
-            with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-                pickle.dump(labeled_embed.label, f1)
+                with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.label, f1)
 
-        else:
-            raise
+            else:
+                raise
 
-        re_id_result_path = os.path.join(result_path, 're_id')
-        if re_id_result_path and not os.path.exists(re_id_result_path):
-            os.makedirs(re_id_result_path)
+            re_id_result_path = os.path.join(result_path, 're_id')
+            if re_id_result_path and not os.path.exists(re_id_result_path):
+                os.makedirs(re_id_result_path)
 
-        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
+            plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
 
 
     
-    elif args.task == 'metric_calc':    
-        with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
+    elif args.task == 'metric_calc':
+        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, margin,
+                                                                                    min_face_res,
+                                                                                    face_reid.re_id_method)
+
+        with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
             mdf_face_id_all = pickle.load(f)
 
 
         ap = calculate_ap(args.annotation_path, mdf_face_id_all, result_path, args.movie)
 
     elif args.task == 'embeddings_viz_umap':
+        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, margin,
+                                                                                    min_face_res,
+                                                                                    face_reid.re_id_method)
         labeled_embed = EmbeddingsCollect()
 
-        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(args.cluster_threshold) + '_KNN_'+ str(args.min_cluster_size) + '.pkl'), 'rb') as f:
+        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
             labeled_embed.embed = pickle.load(f)
 
-        with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(re_id_method['cluster_threshold']) + '_KNN_'+ str(re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
+        with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
             labeled_embed.label = pickle.load(f1)
 
         print("similarity based UMAP", args.simillarity_metric)
@@ -577,12 +646,8 @@ def main():
             if result_path_fn and not os.path.exists(result_path_fn):
                 os.makedirs(result_path_fn)
             # Extract embeddinegs for the FN cases
-            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = extract_faces(path_mdf=mdf_path, result_path=result_path_fn,
+            all_embeddings, mtcnn_cropped_image, names, mdf_id_all = face_reid.extract_faces(path_mdf=mdf_path,
                                                                                     result_path_good_resolution_faces=result_path_fn,
-                                                                                    margin=margin, batch_size=batch_size,
-                                                                                    min_face_res=min_face_res,
-                                                                                    prob_th_filter_blurr=prob_th_filter_blurr,
-                                                                                    re_id_method=re_id_method['method'],
                                                                                     plot_cropped_faces=True)
 
             print("Embeddings of all reID ", len(labeled_embed.embed))
@@ -649,14 +714,13 @@ def main():
         umap_plot(labeled_embed, result_path, metric=args.simillarity_metric)
 
     elif args.task == 'plot_id_over_mdf':
-        with open(os.path.join(result_path,
-                               're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '_eps_' + str(
-                                       args.cluster_threshold) + '_KNN_' + str(args.min_cluster_size) + '.pkl'), 'rb') as f:
+        import subprocess
+        file_full_path = subprocess.getoutput('find ' + args.result_path + ' -iname ' + '"*re-id_res_*"')
+        with open(file_full_path, 'rb') as f:
             mdf_face_id_all = pickle.load(f)
 
-        re_id_result_path = os.path.join(result_path, 're_id')
         if 1:
-            re_id_result_path = os.path.join(result_path, 're_id_fn')
+            re_id_result_path = os.path.join(args.result_path, 're_id_fn')
 
             if re_id_result_path and not os.path.exists(re_id_result_path):
                 os.makedirs(re_id_result_path)
@@ -664,21 +728,22 @@ def main():
             plot_fn = True
             plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
         else:
+            re_id_result_path = os.path.join(args.result_path, 're_id')
             plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
 
 
-    return
 
-    # with open(os.path.join(result_path, 're-id_res_' + str(min_face_res) + '_' + str(prob_th_filter_blurr) + '.pkl'), 'rb') as f:
-    #     mdf_id_all = pickle.load(f)
-    all_det_similarity = classify_min_dist(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
-    all_det_cluster = classify_clustering(faces_path=result_path_good_resolution_faces, batch_size=batch_size)
 
 if __name__ == '__main__':
     main()
 
 
 """
+sprint4
+--path-mdf /media/media/frames --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services
+--path-mdf /media/media/frames --task plot_id_over_mdf --cluster-threshold 0.37 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/res_64_margin_40_eps_0.42_KNN_2
+--path-mdf /media/media/frames --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie video988 --mtcnn-margin 40 --result-path /media/media/services
+# 0.47 WAS GREAT 
 --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40
 --task metric_calc --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty
 --task metric_calc --cluster-threshold 0.3 --min-face-res 64 --min-cluster-size 5 --movie '3001_21_JUMP_STREET'
