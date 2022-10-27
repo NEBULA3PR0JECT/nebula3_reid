@@ -40,12 +40,13 @@ from argparse import ArgumentParser
 from face_reid_util import p_r_plot_multi_class, umap_plot
 import torchvision.transforms as T
 transform = T.ToPILImage()
+import warnings
 
-operational_mode = True
+operational_mode = True #False # True
 class FaceReId:
 
     # init method or constructor
-    def __init__(self, margin=40, min_face_res=64, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
+    def __init__(self, margin=40, min_face_res=92, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
                  prob_th_filter_blurr=0.95, batch_size=128):
         self.margin = margin
@@ -162,6 +163,12 @@ class FaceReId:
                 if bool(face_id):  # Cases where none of the prob>th
                     mdf_id_all.update({os.path.basename(file): face_id})
 
+        if aligned == []:
+            warnings.warn(
+                "No faces have been found in any of MDFs !!!! ")
+            status = False
+            return None, None, None, None, status
+
         all_embeddings = facenet_embeddings(aligned, self.batch_size,
                                             image_size=mtcnn.image_size, device=device, neural_net=resnet)
 
@@ -232,19 +239,33 @@ class FaceReId:
 
     def reid_process_movie(self, path_mdf, result_path_with_movie=None):
 
+        if isinstance(path_mdf, list):# pipeline api
+            path_mdf = os.path.dirname(path_mdf[0])
+
+        if not (os.path.exists(path_mdf)):
+            warnings.warn(
+                "MDF path {} does not exist !!!! ".format(path_mdf))
+            status = False
+            return status
+
+        self.result_path_with_movie = result_path_with_movie
         if result_path_with_movie is None:
-            result_path_with_movie = '/media/media/services' # default scratch folder for analysis
-            if not (os.path.isdir(result_path_with_movie)):
-                raise ValueError("{} Not mounted hance can not write to that folder ".format(os.path.isdir(result_path_with_movie)))
-        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, self.margin,
+            movie_name = os.path.basename(path_mdf)
+            self.result_path_with_movie = os.getenv('REID_RESULT_PATH', '/media/media/services') # default scratch folder for analysis
+            if not (os.path.isdir(self.result_path_with_movie)):
+                raise ValueError("{} Not mounted hence can not write to that folder ".format(os.path.isdir(self.result_path_with_movie)))
+            self.result_path_with_movie = os.path.join(self.result_path_with_movie, movie_name)
+
+        result_path_good_resolution_faces, result_path = create_result_path_folders(self.result_path_with_movie, self.margin,
                                                                                     self.min_face_res,
                                                                                     self.re_id_method)
 
-        if isinstance(path_mdf, list):# pipeline api
-            path_mdf = os.path.dirname(path_mdf)
 
-        plot_fn = True
+        plot_fn = False
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
+        if not (status):
+            return None, None, None, None, status
+
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
         delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
@@ -544,6 +565,7 @@ def main():
     re_id_method = {'method': 'dbscan', 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
     if operational_mode:
+        print("!!!!!!!  For demo algorithm params were set to defaults  !!!!!!!!!!! R U Sure")
         face_reid = FaceReId()
     else:
         face_reid = FaceReId(margin=margin, min_face_res=min_face_res,
@@ -552,7 +574,8 @@ def main():
                              prob_th_filter_blurr=prob_th_filter_blurr,
                              batch_size=batch_size)
 
-
+    print("Settings margin :{} min_face_res{} re_id_method {} simillarity_metric {}".format(face_reid.margin,
+                                                                                            face_reid.min_face_res, face_reid.re_id_method, face_reid.simillarity_metric))
     if args.task == 'classify_faces':
         success = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
         print("success : ", success)
@@ -613,7 +636,7 @@ def main():
         ap = calculate_ap(args.annotation_path, mdf_face_id_all, result_path, args.movie)
 
     elif args.task == 'embeddings_viz_umap':
-        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, margin,
+        _, result_path = create_result_path_folders(result_path_with_movie, margin,
                                                                                     min_face_res,
                                                                                     face_reid.re_id_method)
         labeled_embed = EmbeddingsCollect()
@@ -623,6 +646,9 @@ def main():
 
         with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
             labeled_embed.label = pickle.load(f1)
+
+        with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
+            mdf_face_id_all = pickle.load(f)  #@HK TODO associate the entries/MDF in this dict to the embedings/labels to compute bbox area
 
         print("similarity based UMAP", args.simillarity_metric)
 
@@ -667,7 +693,7 @@ def main():
             fn_unique_label = np.sort(np.unique(labeled_embed.label))[-1] + 1
             for ix in range(all_embeddings.shape[0]):
                 mdf_name_in_csv_loc = np.where([names[ix].split(args.movie)[1] in mdf for mdf in df.mdf])[0]
-                if mdf_name_in_csv_loc.shape[0]!=1:
+                if mdf_name_in_csv_loc.shape[0] != 1:
                     raise
                 mdf_name_in_csv_loc = mdf_name_in_csv_loc.item()
                 id_class = df.loc[mdf_name_in_csv_loc, 'id']
@@ -750,10 +776,14 @@ sprint4
 --path-mdf /media/media/frames --task plot_id_over_mdf --cluster-threshold 0.37 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/res_64_margin_40_eps_0.42_KNN_2
 --path-mdf /media/media/frames --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie video988 --mtcnn-margin 40 --result-path /media/media/services
 # 0.47 WAS GREAT 
+--task embeddings_viz_umap --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40
 --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40
 --task metric_calc --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty
 --task metric_calc --cluster-threshold 0.3 --min-face-res 64 --min-cluster-size 5 --movie '3001_21_JUMP_STREET'
 --task classify_faces --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5
+
+source /home/hanoch/.virtualenvs/nebula3_reid/bin/activate
+
 
 def plot_vg_over_image(result, frame_, caption, lprob):
     import numpy as np
