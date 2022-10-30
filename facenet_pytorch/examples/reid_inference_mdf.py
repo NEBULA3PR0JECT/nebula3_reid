@@ -42,11 +42,12 @@ import torchvision.transforms as T
 transform = T.ToPILImage()
 import warnings
 
-operational_mode = True #False # True
+operational_mode = False #False # True:default param
+# @@HK for Ghandi : min_face_res=128 where dense MDF incease filtering otherwise minor characters clutter the face classification
 class FaceReId:
 
     # init method or constructor
-    def __init__(self, margin=40, min_face_res=92, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
+    def __init__(self, margin=40, min_face_res=96, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
                  prob_th_filter_blurr=0.95, batch_size=128):
         self.margin = margin
@@ -158,7 +159,7 @@ class FaceReId:
                         aligned.append(x_aligned[crop_inx, :, :, :])
                         fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
                         names.append(fname)
-                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1}})
+                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1, 'prob': prob[crop_inx]}})
                         # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
                 if bool(face_id):  # Cases where none of the prob>th
                     mdf_id_all.update({os.path.basename(file): face_id})
@@ -467,6 +468,9 @@ def plot_id_over_mdf(mdf_id_all, result_path, path_mdf, plot_fn=False): # FN plo
         for ids, bbox_n_id in ids_desc_all_clip_mdfs.items():
             if ids_desc_all_clip_mdfs[ids]['id'] != -1:
                 box = ids_desc_all_clip_mdfs[ids]['bbox']
+                box[box < 0] = 0
+                box[3] = [img.size[1] if box[3] > img.size[1] else box[3]][0]
+                box[2] = [img.size[0] if box[2] > img.size[0] else box[2]][0]
                 draw.rectangle(box.tolist(), width=10, outline=color_space[ids_desc_all_clip_mdfs[ids]['id'] % len(color_space)]) # landmark plot
                 margin = np.ceil(0.05 * text_height)
                 draw.text(
@@ -771,6 +775,7 @@ if __name__ == '__main__':
 
 
 """
+--task classify_faces --cluster-threshold 0.26 --min-face-res 128 --min-cluster-size 5 --movie 0011_Gandhi --mtcnn-margin 40
 sprint4
 --path-mdf /media/media/frames --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services
 --path-mdf /media/media/frames --task plot_id_over_mdf --cluster-threshold 0.37 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/res_64_margin_40_eps_0.42_KNN_2

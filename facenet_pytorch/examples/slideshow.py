@@ -59,7 +59,8 @@ def main():
                 path = Path(re_id_path)
                 images[0].save(os.path.join(path.parent.parent.absolute(), str(root.split('/')[-1]) + '_' + str(dir1) + "_thumbnail.gif"), format='GIF',
                                append_images=images,
-                               save_all=True, duration=2700, loop=0)
+                               save_all=True, duration=2000, loop=0)
+                print("Slide show saved {}".format(os.path.join(path.parent.parent.absolute(), str(root.split('/')[-1]) + '_' + str(dir1) + "_thumbnail.gif")))
 
             else:
                 continue

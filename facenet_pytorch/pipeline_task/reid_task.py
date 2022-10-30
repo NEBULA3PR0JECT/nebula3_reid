@@ -9,12 +9,12 @@ pip install nebula3_experts==1.2.0
 """
 import os
 import sys
-from facenet_pytorch.examples.my_inference_mdf import FaceReId
+from facenet_pytorch.examples.reid_inference_mdf import FaceReId
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 
-#from movie.movie_db import MOVIE_DB  ; from __future__ import annotations
+# from movie.movie_db import MOVIE_DB  ; from __future__ import annotations
 
-# import experts.pipeline.api
+import experts.pipeline.api
 # from movie.movie_db import MOVIE_DB
 from abc import ABC, abstractmethod
 
