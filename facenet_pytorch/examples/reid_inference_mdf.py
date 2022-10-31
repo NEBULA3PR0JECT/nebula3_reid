@@ -197,7 +197,7 @@ class FaceReId:
             # for mdfs_ix in range(all_embeddings.shape[0]):
             #     similar_face_mdf = np.argmin(np.array(dists[mdfs_ix])[np.where(np.array(dists[mdfs_ix])!=0)]) # !=0 is the (i,i) items which is one vs the same
             #     all_similar_face_mdf.append(similar_face_mdf)
-        elif self.re_id_method['method'] == 'dbscan':
+        elif self.re_id_method['method'] == 'dbscan' or self.re_id_method['method'] == 'hdbscan':  # @@HK TODO: use the method db.fit_predict() to predict additional embeddings class given the dnscan object inside dbscan_cluster
             clusters = dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
                             out_dir=dbscan_result_path, cluster_threshold=self.re_id_method['cluster_threshold'],
                             min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric)
@@ -284,14 +284,15 @@ class FaceReId:
         mdf_id_all, labeled_embed = self.re_identification(all_embeddings, mtcnn_cropped_image, names,
                                                                 mdf_id_all, result_path, self.simillarity_metric)
 
-        if self.re_id_method['method'] == 'dbscan':
-            with open(os.path.join(result_path, 're-id_res_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
+        if self.re_id_method['method'] == 'dbscan' or self.re_id_method['method'] == 'hdbscan':
+            fname_string = str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size'])
+            with open(os.path.join(result_path, 're-id_res_' + fname_string +'.pkl'), 'wb') as f:
                 pickle.dump(mdf_id_all, f)
             if 1:
-                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'wb') as f1:
                     pickle.dump(labeled_embed.embed, f1)
 
-            with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
+            with open(os.path.join(result_path, 'face-id_embeddings_label_' + fname_string + '.pkl'), 'wb') as f1:
                 pickle.dump(labeled_embed.label, f1)
 
         else:
@@ -301,6 +302,7 @@ class FaceReId:
         if re_id_result_path and not os.path.exists(re_id_result_path):
             os.makedirs(re_id_result_path)
 
+        print("MDFs with reid marked on : {}".format(re_id_result_path))
         plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
 
         return status
@@ -332,7 +334,7 @@ def calculateMahalanobis(y, inv_covmat, y_mu):
 def create_result_path_folders(result_path, margin, min_face_res, re_id_method):
     result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
     # result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_' + str(args.simillarity_metric)
-    result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_' + str(
+    result_path = os.path.join(result_path, 'method_' + str(re_id_method['method']) +'_res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_' + str(
         re_id_method['cluster_threshold'])) + '_KNN_' + str(re_id_method['min_cluster_size'])
 
     if result_path and not os.path.exists(result_path):
@@ -553,6 +555,10 @@ def main():
     parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'],
                         metavar='STRING', help='')
 
+    parser.add_argument('--reid-method', type=str, default='dbscan', choices=['dbscan', 'hdbscan'],
+                        metavar='STRING', help='')
+
+
     parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
     args = parser.parse_args()
@@ -566,7 +572,7 @@ def main():
     min_face_res = args.min_face_res#64 #+ margin #64*1.125 + margin # margin is post processing 
     prob_th_filter_blurr = 0.95
     batch_size = batch_size if torch.cuda.is_available() else 0
-    re_id_method = {'method': 'dbscan', 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
+    re_id_method = {'method': args.reid_method, 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
     if operational_mode:
         print("!!!!!!!  For demo algorithm params were set to defaults  !!!!!!!!!!! R U Sure")
@@ -629,29 +635,34 @@ def main():
 
     
     elif args.task == 'metric_calc':
-        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, margin,
-                                                                                    min_face_res,
+        result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
+                                                                                    face_reid.min_face_res,
                                                                                     face_reid.re_id_method)
 
-        with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
-            mdf_face_id_all = pickle.load(f)
+        fname_string = str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(
+            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size'])
 
+        with open(os.path.join(result_path, 're-id_res_' + fname_string + '.pkl'), 'rb') as f:
+            mdf_face_id_all = pickle.load(f)
 
         ap = calculate_ap(args.annotation_path, mdf_face_id_all, result_path, args.movie)
 
     elif args.task == 'embeddings_viz_umap':
-        _, result_path = create_result_path_folders(result_path_with_movie, margin,
-                                                                                    min_face_res,
-                                                                                    face_reid.re_id_method)
+        _, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
+                                                                                face_reid.min_face_res,
+                                                                                face_reid.re_id_method)
         labeled_embed = EmbeddingsCollect()
 
-        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
+        fname_string = str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(
+            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size'])
+
+        with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'rb') as f:
             labeled_embed.embed = pickle.load(f)
 
-        with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f1:
+        with open(os.path.join(result_path, 'face-id_embeddings_label_' + fname_string + '.pkl'), 'rb') as f1:
             labeled_embed.label = pickle.load(f1)
 
-        with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'rb') as f:
+        with open(os.path.join(result_path, 're-id_res_' + fname_string + '.pkl'), 'rb') as f:
             mdf_face_id_all = pickle.load(f)  #@HK TODO associate the entries/MDF in this dict to the embedings/labels to compute bbox area
 
         print("similarity based UMAP", args.simillarity_metric)
@@ -787,92 +798,7 @@ sprint4
 --task metric_calc --cluster-threshold 0.3 --min-face-res 64 --min-cluster-size 5 --movie '3001_21_JUMP_STREET'
 --task classify_faces --cluster-threshold 0.28 --min-face-res 64 --min-cluster-size 5
 
+venv :
 source /home/hanoch/.virtualenvs/nebula3_reid/bin/activate
-
-
-def plot_vg_over_image(result, frame_, caption, lprob):
-    import numpy as np
-    print("SoftMax score of the decoder", lprob, lprob.sum())
-    print('Caption: {}'.format(caption))
-    window_name = 'Image'
-    image = np.array(frame_)
-    img = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    normalizedImg = np.zeros_like(img)
-    normalizedImg = cv2.normalize(img, normalizedImg, 0, 255, cv2.NORM_MINMAX)
-    img = normalizedImg.astype('uint8')
-
-    image = cv2.rectangle(
-        img,
-        (int(result[0]["box"][0]), int(result[0]["box"][1])),
-        (int(result[0]["box"][2]), int(result[0]["box"][3])),
-        (0, 255, 0),
-        3
-    )
-    # print(caption)
-    movie_id = '111'
-    mdf = '-1'
-    path = './'
-    file = 'pokemon'
-    cv2.imshow(window_name, img)
-
-    cv2.setWindowTitle(window_name, str(movie_id) + '_mdf_' + str(mdf) + '_' + caption)
-    cv2.putText(image, caption + '_ prob_' + str(lprob.sum().__format__('.3f')) + str(lprob),
-                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 255), thickness=2,
-                lineType=cv2.LINE_AA, org=(10, 40))
-    fname = str(file) + '_' + str(caption) + '.png'
-    cv2.imwrite(os.path.join(path, fname),
-                image)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-
-
-        if detection_with_landmark:
-            boxes, probs, points = mtcnn.detect(img, landmarks=True)
-            if boxes is not None:
-            # Draw boxes and save faces
-                img_draw = img.copy()
-                draw = ImageDraw.Draw(img_draw)
-                for i, (box, point) in enumerate(zip(boxes, points)):
-
-                    print("confidence: {}".format(str(probs[0].__format__('.2f'))))
-                    if (box[2] - box[0])>min_face_res and (box[3] - box[1])>min_face_res:
-                        face_bb_resolution = 'res_ok'
-                    else:
-                        face_bb_resolution = 'res_bad'
-
-                    draw.rectangle(box.tolist(), width=5) # landmark plot
-                    for p in point:
-                        # draw.rectangle((p - 10).tolist() + (p + 10).tolist(), width=4)
-                        draw.rectangle((p - 1).tolist() + (p + 1).tolist(), width=2)
-
-                        # for i in range(5):
-                        #     draw.ellipse([
-                        #         (p[i] - 1.0, p[i + 5] - 1.0),
-                        #         (p[i] + 1.0, p[i + 5] + 1.0)
-                        #     ], outline='blue')
-
-
-                    print("N-Landmarks {}".format(point.shape[0]))
-
-                    if save_images:
-                        if face_bb_resolution == 'res_ok':
-                            save_path = os.path.join(result_path_good_resolution_faces, 
-                                                        str(file_inx) + '_' + face_bb_resolution + '_' + str(point.shape[0]) + '_face_{}'.format(i) + os.path.basename(file))
-                        else:
-                            save_path = os.path.join(result_path, 
-                                            str(file_inx) + '_' + face_bb_resolution + '_' + str(point.shape[0]) + '_face_{}'.format(i) + os.path.basename(file))
-                    else:
-                        save_path = None
-# From some reason the channels are BGR save_img() revert that back
-                    x_aligned = extract_face(img, box, save_path=save_path) # implicitly saves the faces
-                    # imgp = transform(x_aligned.squeeze())
-                    # imgp.save(save_path)
-
-                    if face_bb_resolution == 'res_ok':
-                        mtcnn_cropped_image.append(x_aligned) 
-                        x_aligned = fixed_image_standardization(x_aligned) # as done by the mtcnn.forward() to inject to FaceNet
-                        aligned.append(x_aligned)
-                        names.append(str(file_inx) + '_' + face_bb_resolution + '_'+ 'face_{}'.format(i) + os.path.basename(file))
-                if save_images:
-                    img_draw.save(os.path.join(result_path, str(file_inx) + '_' +os.path.basename(file)))
-            else:
 
 """

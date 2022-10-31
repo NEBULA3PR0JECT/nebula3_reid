@@ -14,6 +14,10 @@ from sklearn.cluster import DBSCAN
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
+# sudo apt-get update
+# sudo apt-get upgrade
+# In order to pip install hdbscan clone repo, and follow installation :https://github.com/scikit-learn-contrib/hdbscan
+import hdbscan
 # np.where(np.nonzero(db.labels_==0)[0]==457) np.where(np.nonzero(db.labels_==0)[0]==458)
 # pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)
 def dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
