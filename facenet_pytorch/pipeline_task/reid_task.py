@@ -201,7 +201,7 @@ if __name__ == '__main__': #'test':
                 "PIPELINE_ID does not exist, exit!!!!")
             sys.exit()
     else:
-        pipeline_id = '8fae7dfb-b091-47f3-81e4-d78ebaf844b3'#'45f4739b-146a-4ae3-9d06-16dee5df6ca7'
+        pipeline_id = '72160aa5-c096-4fb2-8874-92ffdedd028f'#'72160aa5-c096-4fb2-8874-92ffdedd028f'#'8fae7dfb-b091-47f3-81e4-d78ebaf844b3'#'45f4739b-146a-4ae3-9d06-16dee5df6ca7'
     test_pipeline_task(pipeline_id)
 
 """"
