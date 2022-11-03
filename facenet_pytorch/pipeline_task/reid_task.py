@@ -5,7 +5,7 @@ To use:
   extra-index-url = http://74.82.29.209:8090
   trusted-host = http://74.82.29.209:8090
 and then install expert:
-pip install nebula3_experts==1.2.0
+pip install nebula3_experts==1.2.3
 """
 import os
 import sys
@@ -21,9 +21,13 @@ from movie.movie_db import MOVIE_DB
 
 movie_db = MOVIE_DB()
 WEB_PREFIX = os.getenv('WEB_PREFIX', 'http://74.82.29.209:9000')
+WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID', WEB_PREFIX + '//datasets/media/services')
 # from abc import ABC, abstractmethod
 
-pilot = False #True  # False # till pipeline will be python3.8
+pilot = True #True  # False # till pipeline will be python3.8
+# Read the reId from web server
+# http://74.82.29.209:9000//datasets/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/re_id/re-id_0001_American_Beauty_00.00.51.926-00.00.54.129_clipmdf_0034.jpg
+
 # sys.path.insert(0, "/notebooks/")
 # # sys.path.insert(0, './')
 # sys.path.insert(0, 'nebula3_database/')
@@ -132,7 +136,9 @@ class MyTask(PipelineTask):
             dict_tmp = eval(movie_id)
             if not pilot:
                 list_mdfs = dict_tmp['mdfs_path']
-        success = self.face_reid.reid_process_movie(mdfs_local_paths)
+        re_id_image_file_web_path = WEB_PATH_SAVE_REID
+        success = self.face_reid.reid_process_movie(mdfs_local_paths,
+                                                    save_results_to_db=True, re_id_image_file_web_path=re_id_image_file_web_path)
         # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
         # task actual work
         return success, None
@@ -189,13 +195,13 @@ doc_movie_3132222071598952047 = {
 }
 if __name__ == '__main__': #'test':
     pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
-    if 0: # TODO uncomment
+    if 1: # TODO uncomment
         if pipeline_id is None:
             warnings.warn(
                 "PIPELINE_ID does not exist, exit!!!!")
             sys.exit()
     else:
-        pipeline_id = '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
+        pipeline_id = '8fae7dfb-b091-47f3-81e4-d78ebaf844b3'#'45f4739b-146a-4ae3-9d06-16dee5df6ca7'
     test_pipeline_task(pipeline_id)
 
 """"

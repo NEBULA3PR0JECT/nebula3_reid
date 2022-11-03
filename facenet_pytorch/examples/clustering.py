@@ -11,6 +11,7 @@ import math
 
 from scipy import misc
 from sklearn.cluster import DBSCAN
+from scipy.spatial import distance
 import torchvision.transforms as T
 transform = T.ToPILImage()
 
@@ -19,14 +20,99 @@ transform = T.ToPILImage()
 # In order to pip install hdbscan clone repo, and follow installation :https://github.com/scikit-learn-contrib/hdbscan
 import hdbscan
 # np.where(np.nonzero(db.labels_==0)[0]==457) np.where(np.nonzero(db.labels_==0)[0]==458)
-# pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)
-def dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
+# pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)  # aka gram matrix
+def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
+                    min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean', method='dbscan'):
+
+    matrix = matrix.cpu().numpy()
+    precomputed = False
+
+    if method == 'hdbscan' and metric == 'cosine':
+        precomputed = True
+        dist = distance.cdist(matrix, matrix, metric='cosine')
+        metric = 'precomputed'
+
+    if method == 'hdbscan':
+        db = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
+                gen_min_span_tree=True, leaf_size=40, # memory=Memory(cachedir=None)
+                metric=metric, min_cluster_size=5, min_samples=None, p=None)  # TODO : try arccos metric
+    elif method == 'dbscan':
+        # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
+        db = DBSCAN(eps=cluster_threshold, min_samples=min_cluster_size, metric=metric)  # , metric='precomputed')
+    else:
+        raise
+
+    if precomputed:
+        db.fit(dist)
+    else:
+        db.fit(matrix)
+
+    labels = db.labels_
+
+    # get number of clusters
+    no_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    clusters = dict()
+    print('No of clusters:', no_clusters)
+    if no_clusters==0:
+        import warnings
+        warnings.warn("No IDs were found too few embeddings per ID > K of K-NN")
+    if no_clusters > 0:
+        if largest_cluster_only:
+            largest_cluster = 0
+            for i in range(no_clusters):
+                print('Cluster {}: {}'.format(i, np.nonzero(labels == i)[0]))
+                clusters.update({i:np.nonzero(labels == i)[0]})
+                if len(np.nonzero(labels == i)[0]) > len(np.nonzero(labels == largest_cluster)[0]):
+                    largest_cluster = i
+            if save_images:
+                print('Saving largest cluster (Cluster: {})'.format(largest_cluster))
+                cnt = 1
+                for i in np.nonzero(labels == largest_cluster)[0]:
+                    misc.imsave(os.path.join(out_dir, str(cnt) + '.png'), images[i])
+                    cnt += 1
+        else:
+            print('Saving all clusters')
+            for i in range(no_clusters):
+                cnt = 1
+                print('Cluster {}: {}'.format(i, np.nonzero(labels == i)[0]))
+                clusters.update({i:np.nonzero(labels == i)[0]})
+                path = os.path.join(out_dir, str(i))
+                if not os.path.exists(path):
+                    os.makedirs(path)
+                    if save_images:
+                        for j in np.nonzero(labels == i)[0]:
+                            imgp = transform(images[j])
+                            imgp.save(os.path.join(path, str(cnt) + '.png'))
+
+                            # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
+                            cnt += 1
+                else:
+                    if save_images:
+                        for j in np.nonzero(labels == i)[0]:
+                            imgp = transform(images[j])
+                            imgp.save(os.path.join(path, str(cnt) + '.png'))
+                            # misc.imsave(os.path.join(path, str(cnt) + '.png'), images[j])
+                            cnt += 1
+    return clusters
+
+def hdbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
                     min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean'):
 
     matrix = matrix.cpu().numpy()
- # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
-    db = DBSCAN(eps=cluster_threshold, min_samples=min_cluster_size, metric=metric)#, metric='precomputed')
-    db.fit(matrix) #(n_samples, n_features),
+    precomputed = True
+    if precomputed:
+        dist = distance.cdist(matrix, matrix, metric='cosine')
+        metric = 'precomputed'
+
+    db = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
+            gen_min_span_tree=True, leaf_size=40, # memory=Memory(cachedir=None)
+            metric=metric, min_cluster_size=5, min_samples=None, p=None)  # TODO : try arccos metric
+    if precomputed:
+        db.fit(dist)
+    else:
+        db.fit(matrix)
+
+    # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
     labels = db.labels_
 
     # get number of clusters
