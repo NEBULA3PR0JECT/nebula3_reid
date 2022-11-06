@@ -11,9 +11,9 @@ import os
 import sys
 import warnings
 import urllib
-from facenet_pytorch.examples.reid_inference_mdf import FaceReId
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
-
+from facenet_pytorch.examples.reid_inference_mdf import FaceReId
+print(os.getcwd())
 # from movie.movie_db import MOVIE_DB  ; from __future__ import annotations
 
 from experts.pipeline.api import *
@@ -144,7 +144,7 @@ class MyTask(PipelineTask):
         return success, None
 
     def get_name(self):
-        return "re_id-task"
+        return "re_id_task"
 
 def test_pipeline_task(pipeline_id):
     task = MyTask()
