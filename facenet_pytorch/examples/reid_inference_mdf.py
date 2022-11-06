@@ -336,7 +336,8 @@ class EmbeddingsCollect():
 try:
     font = ImageFont.truetype('arial.ttf', 24)
 except IOError:
-    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()
+    font = ImageFont.load_default()
+    # font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()  font = ImageFont.load_default()
 
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
 not_id = -1
