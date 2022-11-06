@@ -37,7 +37,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from argparse import ArgumentParser
-from face_reid_util import p_r_plot_multi_class, umap_plot
+from examples.face_reid_util import p_r_plot_multi_class, umap_plot
 import torchvision.transforms as T
 transform = T.ToPILImage()
 import warnings
