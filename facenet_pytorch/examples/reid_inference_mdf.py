@@ -257,6 +257,10 @@ class FaceReId:
             if save_results_to_db:
                 re_id_image_file_web_path = kwargs.pop('re_id_image_file_web_path', self.result_path_with_movie)
                 re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, movie_name)
+            if 1:
+                if not (os.path.isdir('/datasets/media/services')):
+                    ("{} Not mounted hence can not write to that folder ".format(
+                        os.path.isdir('/datasets/media/services')))
 
             if not (os.path.isdir(self.result_path_with_movie)):
                 raise ValueError("{} Not mounted hence can not write to that folder ".format(os.path.isdir(self.result_path_with_movie)))
