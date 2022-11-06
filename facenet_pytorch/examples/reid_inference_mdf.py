@@ -258,12 +258,16 @@ class FaceReId:
                 re_id_image_file_web_path = kwargs.pop('re_id_image_file_web_path', self.result_path_with_movie)
                 re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, movie_name)
             if 1:
+                print("os.getenv REID_RESULT_PATH", os.getenv('REID_RESULT_PATH'))
                 if not (os.path.isdir('/datasets/media/services')):
-                    ("{} Not mounted hence can not write to that folder ".format(
+                    print("{} Not mounted hence can not write to that folder ".format(
+                        os.path.isdir('/datasets/media/services')))
+                else:
+                    print("{} YES: mounted hence can not write to that folder ".format(
                         os.path.isdir('/datasets/media/services')))
 
             if not (os.path.isdir(self.result_path_with_movie)):
-                raise ValueError("{} Not mounted hence can not write to that folder ".format(os.path.isdir(self.result_path_with_movie)))
+                raise ValueError("{} Not mounted hence can not write to that folder ".format(self.result_path_with_movie))
             self.result_path_with_movie = os.path.join(self.result_path_with_movie, movie_name)
 
         result_path_good_resolution_faces, result_path = create_result_path_folders(self.result_path_with_movie, self.margin,
