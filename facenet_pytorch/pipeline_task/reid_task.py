@@ -12,7 +12,7 @@ import sys
 import warnings
 import urllib
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
-from facenet_pytorch.examples.reid_inference_mdf import FaceReId
+from examples.reid_inference_mdf import FaceReId
 print(os.getcwd())
 # from movie.movie_db import MOVIE_DB  ; from __future__ import annotations
 
