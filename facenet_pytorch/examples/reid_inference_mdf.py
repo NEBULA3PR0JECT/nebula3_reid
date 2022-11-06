@@ -274,7 +274,7 @@ class FaceReId:
         plot_fn = False
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
         if not (status):
-            return None, None, None, None, status
+            return status, None
 
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
@@ -614,7 +614,7 @@ def main():
     print("Settings margin :{} min_face_res{} re_id_method {} simillarity_metric {}".format(face_reid.margin,
                                                                                             face_reid.min_face_res, face_reid.re_id_method, face_reid.simillarity_metric))
     if args.task == 'classify_faces':
-        success = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
+        success, _ = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
         print("success : ", success)
         return success
         if 0:
