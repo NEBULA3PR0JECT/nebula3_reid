@@ -29,6 +29,7 @@ gdown==4.5.1
 grpcio==1.37.1
 grpcio-tools==1.37.1
 HeapDict==1.0.1
+hdbscan==0.8.28
 holoviews==1.15.0
 huggingface-hub==0.9.1
 idna==3.4
