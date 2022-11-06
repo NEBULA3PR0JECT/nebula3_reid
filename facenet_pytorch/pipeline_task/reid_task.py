@@ -13,16 +13,18 @@ import warnings
 import urllib
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 from examples.reid_inference_mdf import FaceReId
-print(os.getcwd())
-# from movie.movie_db import MOVIE_DB  ; from __future__ import annotations
-
+from examples.remote_storage_utils import RemoteStorage
 from experts.pipeline.api import *
 from movie.movie_db import MOVIE_DB
 
 movie_db = MOVIE_DB()
-WEB_PREFIX = os.getenv('WEB_PREFIX', 'http://74.82.29.209:9000')
-WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID', WEB_PREFIX + '//datasets/media/services')
+# WEB_PREFIX = os.getenv('WEB_PREFIX', 'http://74.82.29.209:9000')
+# DEFAULT_FRAMES_PATH = "/tmp/movie_frames"
+
+
+remote_storage = RemoteStorage()
 # from abc import ABC, abstractmethod
+WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID', remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')#access ReID MDFs from Web address
 
 pilot = True #True  # False # till pipeline will be python3.8
 # Read the reId from web server
@@ -79,13 +81,11 @@ def get_mdfs_path(movie_db, movie_id):
     return (stages)
 
 
-DEFAULT_FRAMES_PATH = "/tmp/movie_frames"
-
-def download_image_file(image_url, image_location = None, remove_prev = True):
+def download_image_file(image_url, image_location=None, remove_prev=True):
     """ download image file to location """
     result = False
     if image_location is None:
-        image_location = os.path.join(DEFAULT_FRAMES_PATH, 'tmp.jpg')
+        image_location = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH, 'tmp.jpg')
     # remove last file
     if remove_prev and os.path.exists(image_location):
         os.remove(image_location)
@@ -115,12 +115,12 @@ class MyTask(PipelineTask):
         print(f'handling movie: {movie_id}')
         if 1:
             movie_db.get_movie(movie_id)
-            list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id)
-            mdfs_urls = [WEB_PREFIX + x for x in list_mdfs]
+            list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id) # Arango DB Query
+            mdfs_urls = [remote_storage.vp_config.WEB_PREFIX + x for x in list_mdfs]
 
             movie_name = os.path.dirname(list_mdfs[0]).split('/')[-1]
             movie_id_no_database = movie_id.split('/')[-1]
-            result_path = os.path.join(DEFAULT_FRAMES_PATH, movie_id_no_database, movie_name)
+            result_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH, movie_id_no_database, movie_name)
 
             if not os.path.exists(result_path):
                 os.makedirs(result_path)
@@ -136,9 +136,22 @@ class MyTask(PipelineTask):
             dict_tmp = eval(movie_id)
             if not pilot:
                 list_mdfs = dict_tmp['mdfs_path']
+        tmp_frame_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH_RESULTS_TO_UPLOAD, movie_name)
         re_id_image_file_web_path = WEB_PATH_SAVE_REID
-        success = self.face_reid.reid_process_movie(mdfs_local_paths,
+        success, re_id_result_path = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths, result_path_with_movie=tmp_frame_path,
                                                     save_results_to_db=True, re_id_image_file_web_path=re_id_image_file_web_path)
+
+        mdfs_local_dir = re_id_result_path#f'{remote_storage.vp_config.get_local_frames_path()}/{movie_name}'
+        mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
+        remote_storage.save_re_id_mdf_to_web(mdfs_local_dir, mdfs_web_dir)
+
+        filenames = [os.path.join(mdfs_local_dir, x) for x in os.listdir(mdfs_local_dir)
+                     if x.endswith('png') or x.endswith('jpg')]
+        web_path = list()
+        for file in filenames:
+            web_path.append(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(file)))
+            print("Web path for ReID MDF: {}".format(web_path[-1]))
+            # print(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(file)))
         # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
         # task actual work
         return success, None

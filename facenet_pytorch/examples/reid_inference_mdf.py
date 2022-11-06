@@ -250,21 +250,14 @@ class FaceReId:
             status = False
             return status
 
+        movie_name = os.path.basename(path_mdf)
         self.result_path_with_movie = result_path_with_movie
+        if save_results_to_db:
+            re_id_image_file_web_path = kwargs.pop('re_id_image_file_web_path')
+            re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, movie_name)
+
         if result_path_with_movie is None:
-            movie_name = os.path.basename(path_mdf)
             self.result_path_with_movie = os.getenv('REID_RESULT_PATH', '/media/media/services') # default scratch folder for analysis
-            if save_results_to_db:
-                re_id_image_file_web_path = kwargs.pop('re_id_image_file_web_path', self.result_path_with_movie)
-                re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, movie_name)
-            if 1:
-                print("os.getenv REID_RESULT_PATH", os.getenv('REID_RESULT_PATH'))
-                if not (os.path.isdir('/datasets/media/services')):
-                    print("{} Not mounted hence can not write to that folder ".format(
-                        os.path.isdir('/datasets/media/services')))
-                else:
-                    print("{} YES: mounted hence can not write to that folder ".format(
-                        os.path.isdir('/datasets/media/services')))
 
             if not (os.path.isdir(self.result_path_with_movie)):
                 raise ValueError("{} Not mounted hence can not write to that folder ".format(self.result_path_with_movie))
@@ -328,12 +321,12 @@ class FaceReId:
         if save_results_to_db:
             re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, 're_id')
 
-            web_path = list()
-            for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
-                web_path.append(os.path.join(re_id_image_file_web_path, 're-id_' + os.path.basename(file)))
-                print("Web path for ReID MDF: {}" .format(web_path[-1]))
+            # web_path = list()
+            # for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
+            #     web_path.append(os.path.join(re_id_image_file_web_path, 're-id_' + os.path.basename(file)))
+            #     print("Web path for ReID MDF: {}" .format(web_path[-1]))
 
-        return status
+        return status, re_id_result_path
 
 class EmbeddingsCollect():
     def __init__(self):
@@ -342,9 +335,14 @@ class EmbeddingsCollect():
         return
 
 try:
-    font = ImageFont.truetype('arial.ttf', 24)
+    # font = ImageFont.truetype('arial.ttf', 24)
+    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84)
 except IOError:
-    font = ImageFont.load_default()
+    font_path = os.path.join(cv2.__path__[0], 'qt', 'fonts', 'DejaVuSans.ttf')
+    font = ImageFont.truetype(font_path, size=84)
+
+    # font = ImageFont.load_default()
+
     # font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()  font = ImageFont.load_default()
 
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
