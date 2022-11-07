@@ -274,7 +274,7 @@ class FaceReId:
         plot_fn = False
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
         if not (status):
-            return status, None
+            return True, None # have to return Tru otherwise workflow gradient pipeline gen exception
 
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
