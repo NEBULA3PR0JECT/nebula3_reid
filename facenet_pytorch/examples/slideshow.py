@@ -41,10 +41,10 @@ def main():
         for dir1 in dirs:
             if not os.path.isdir(os.path.join(root, dir1)):
                 continue
-            if 're_id' in os.listdir(os.path.join(root, dir1)):
+            if 're_id' in os.listdir(os.path.join(root, dir1)) or 're_id' in os.listdir(root): # re_id folder are in current => no recursion of folders
                 print("Process ", root, dirs)
                 images = []
-                re_id_path = os.path.join(os.path.join(root, dir1), 're_id')
+                re_id_path = [os.path.join(os.path.join(root, dir1), 're_id') if 're_id' in os.listdir(os.path.join(root, dir1)) else os.path.join(os.path.join(root), 're_id')][0]#os.path.join(os.path.join(root, dir1), 're_id')
                 print(re_id_path)
                 filenames = [os.path.join(re_id_path, x) for x in os.listdir(re_id_path)
                                     if x.endswith('png') or x.endswith('jpg')]

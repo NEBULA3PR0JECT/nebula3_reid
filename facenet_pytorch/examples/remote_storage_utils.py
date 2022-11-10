@@ -65,3 +65,4 @@ class RemoteStorage():
             mdfs_local_dir: mdfs_web_dir
         }
         self.upload_files_to_web(uploads)
+

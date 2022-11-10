@@ -27,6 +27,7 @@ remote_storage = RemoteStorage()
 WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID', remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')#access ReID MDFs from Web address
 
 pilot = True #True  # False # till pipeline will be python3.8
+save_results_to_db = True
 # Read the reId from web server
 # http://74.82.29.209:9000//datasets/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/re_id/re-id_0001_American_Beauty_00.00.51.926-00.00.54.129_clipmdf_0034.jpg
 
@@ -35,6 +36,7 @@ pilot = True #True  # False # till pipeline will be python3.8
 # sys.path.insert(0, 'nebula3_database/')
 # sys.path.append("/notebooks/nebula3_database")
 # from nebula3_database.config import NEBULA_CONF
+# from nebula3_database.database.arangodb import DatabaseConnector
 # from nebula3_database.database.arangodb import DatabaseConnector
 
 # class PIPELINE:
@@ -47,9 +49,59 @@ pilot = True #True  # False # till pipeline will be python3.8
 #         self.nre = MOVIE_DB()
 #         self.nre.change_db("prodemo")
 #         self.db = self.nre.db
-#
 # pipeline = PIPELINE()
 
+def insert_json_to_db(movie_db, combined_json):
+    """
+    Inserts a JSON with global & local tokens to the database.
+    """
+
+    movie_db.change_db("prodemo")
+    db = movie_db
+
+    query = 'UPSERT { movie_id: @movie_id } \
+            INSERT { movie_id: @movie_id, frames: @frames, urls: @urls} \
+            UPDATE { movie_id: @movie_id, frames: @frames , urls: @urls} \
+            IN  s4_re_id'
+
+    movie_db.db.aql.execute(query, bind_vars=combined_json)
+    print("Successfully inserted to database.")
+
+    return
+
+
+def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id):
+    # from examples.remote_storage_utils import RemoteStorage
+
+    # remote_storage = RemoteStorage()
+    # from abc import ABC, abstractmethod
+    WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID',
+                                   remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')  # access ReID MDFs from Web address
+
+    mdfs_local_dir = re_id_result_path
+    mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
+    urls = list()
+
+    frames = []
+    ix = 0
+    for frame_number, v in mdf_id_all.items():
+        for reid in list(v.values()):
+            if reid['id'] != - 1:
+                frames.append({
+                    'frame_number': frame_number,
+                    'bbox': reid['bbox'].tolist(),
+                    'id': reid['id'],
+                    'prob': str(reid['prob'])
+                })
+                url = remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir,
+                                                                               os.path.basename(mdfs_local_dir),
+                                                                               os.path.basename(frame_number))
+                urls.append({'frame_number': frame_number, 'url': web_path[ix]})
+                ix += 1
+
+
+    reid_json = {'movie_id': movie_id, 'frames': frames, 'urls': urls}
+    return reid_json
 
 # def get_movie(self, movie_id):
 #     query = 'FOR doc IN Movies FILTER doc._id == "{}" RETURN doc'.format(movie_id)
@@ -138,22 +190,27 @@ class MyTask(PipelineTask):
                 list_mdfs = dict_tmp['mdfs_path']
         tmp_frame_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH_RESULTS_TO_UPLOAD, movie_name)
         re_id_image_file_web_path = WEB_PATH_SAVE_REID
-        success, re_id_result_path = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths, result_path_with_movie=tmp_frame_path,
+        success, re_id_result_path, mdf_id_all = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths, result_path_with_movie=tmp_frame_path,
                                                     save_results_to_db=True, re_id_image_file_web_path=re_id_image_file_web_path)
 
         mdfs_local_dir = re_id_result_path#f'{remote_storage.vp_config.get_local_frames_path()}/{movie_name}'
         mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
         remote_storage.save_re_id_mdf_to_web(mdfs_local_dir, mdfs_web_dir)
 
-        filenames = [os.path.join(mdfs_local_dir, x) for x in os.listdir(mdfs_local_dir)
+        mdf_filenames = [os.path.join(mdfs_local_dir, x) for x in os.listdir(mdfs_local_dir)
                      if x.endswith('png') or x.endswith('jpg')]
+
         web_path = list()
-        for file in filenames:
-            web_path.append(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(file)))
+        for mdf_file in mdf_filenames:
+            web_path.append(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(mdf_file)))
             print("Web path for ReID MDF: {}".format(web_path[-1]))
             # print(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(file)))
         # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
         # task actual work
+
+        if save_results_to_db:
+            re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
+            insert_json_to_db(movie_db, re_id_json)
         return success, None
 
     def get_name(self):

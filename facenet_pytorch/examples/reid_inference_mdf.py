@@ -44,6 +44,29 @@ import warnings
 
 operational_mode = False #False # True:default param
 # @@HK for Ghandi : min_face_res=128 where dense MDF incease filtering otherwise minor characters clutter the face classification
+
+class EmbeddingsCollect():
+    def __init__(self):
+        self.embed = list()
+        self.label = list()
+        return
+
+try:
+    # font = ImageFont.truetype('arial.ttf', 24)
+    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84)
+except IOError:
+    font_path = os.path.join(cv2.__path__[0], 'qt', 'fonts', 'DejaVuSans.ttf')
+    font = ImageFont.truetype(font_path, size=56)
+
+    # font = ImageFont.load_default()
+
+    # font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()  font = ImageFont.load_default()
+
+color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
+not_id = -1
+# [n for n, c in ImageColor.colormap.items()]
+
+
 class FaceReId:
 
     # init method or constructor
@@ -228,17 +251,55 @@ class FaceReId:
         labeled_embed = EmbeddingsCollect()
 
         for mdf, id_v in mdf_id_all.items():
+            mdf_id_list_phantom_id = list()
+            mdf_id_dict_phantom_max_prob = dict()
+            mdf_id_dict_id_per_face_key_max_prob = dict()
             for k, v in id_v.items():
                 if k in names:
                     ix = names.index(k)
                     id_cluster_no = find_key_given_value(clusters, ix)
                     if id_cluster_no != -1:
-                        mdf_id_all[mdf][k]['id'] = id_cluster_no
+                        if 1: # phantom handling
+                            if id_cluster_no in mdf_id_list_phantom_id: # phantom is detected since that ID already appeared
+                                max_prob_id = mdf_id_dict_phantom_max_prob.get(id_cluster_no, 0) # max prob so far for specific ID
+                                if max_prob_id < mdf_id_all[mdf][k]['prob']: # candidate has greater prob hence it is real and previous is phantom
+                                    print("*********  Remove Phantom ID!!! **********", mdf, k, id_cluster_no, max_prob_id, mdf_id_all[mdf][k]['prob'])
+                                    key_phantom = mdf_id_dict_id_per_face_key_max_prob.get(id_cluster_no, -100)
+                                    if key_phantom == -100: # first time ever
+                                        print("BUG mdf_id_dict_id_per_face_key_max_prob was already set")
+                                    mdf_id_all[mdf][key_phantom]['id'] = -1 # overwrite with Phantom
+                                    mdf_id_all[mdf][k]['id'] = id_cluster_no
+                                    mdf_id_dict_id_per_face_key_max_prob.update({id_cluster_no: k})
+                            else:
+                                mdf_id_all[mdf][k]['id'] = id_cluster_no
+                                mdf_id_list_phantom_id.append(id_cluster_no)
+                                mdf_id_dict_id_per_face_key_max_prob.update({id_cluster_no: k})
+
+                            # update prob with the max per ID
+                            max_prob_id = mdf_id_dict_phantom_max_prob.get(id_cluster_no, 0)
+                            if max_prob_id < mdf_id_all[mdf][k]['prob']:
+                                mdf_id_dict_phantom_max_prob.update({id_cluster_no: mdf_id_all[mdf][k]['prob']})
+                        else:
+                            mdf_id_all[mdf][k]['id'] = id_cluster_no # old version
+
                         labeled_embed.embed.append(all_embeddings[ix])
                         labeled_embed.label.append(id_cluster_no)
 
-        return mdf_id_all, labeled_embed
+        if 1: # validation code for phantom ID
+            for k, v in mdf_id_all.items():
+                it = list(v.values())
+                mdf_dict_list = list(it)
+                lbls, cs = np.unique([x['id'] for x in mdf_dict_list], return_counts=True)
+                # print(lbls[cs>1][lbls[cs>1]!=-1])
+                multi_same_lbl = lbls[cs > 1][lbls[cs > 1] != -1]
+                if multi_same_lbl.size > 0:
+                    print(multi_same_lbl, k)
+                    print('hueston repetative label in MDF!!!', multi_same_lbl)
+                    for repet in multi_same_lbl:
+                        print(mdf_id_all[k])
 
+        return mdf_id_all, labeled_embed
+    # lbl, c = np.unique([x['id'] for x in list(list(mdf_id_all.values())[0].values())], return_counts=True)   [x for x in list(mdf_id_all.values())]
     def reid_process_movie(self, path_mdf, result_path_with_movie=None, save_results_to_db=False, **kwargs):
 
         if isinstance(path_mdf, list):# pipeline api
@@ -318,36 +379,11 @@ class FaceReId:
 
         print("MDFs with reid marked on : {}".format(re_id_result_path))
         plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
-        if save_results_to_db:
-            re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, 're_id')
+        # if save_results_to_db:
+        #     re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, 're_id')
 
-            # web_path = list()
-            # for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
-            #     web_path.append(os.path.join(re_id_image_file_web_path, 're-id_' + os.path.basename(file)))
-            #     print("Web path for ReID MDF: {}" .format(web_path[-1]))
+        return status, re_id_result_path, mdf_id_all
 
-        return status, re_id_result_path
-
-class EmbeddingsCollect():
-    def __init__(self):
-        self.embed = list()
-        self.label = list()
-        return
-
-try:
-    # font = ImageFont.truetype('arial.ttf', 24)
-    font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84)
-except IOError:
-    font_path = os.path.join(cv2.__path__[0], 'qt', 'fonts', 'DejaVuSans.ttf')
-    font = ImageFont.truetype(font_path, size=84)
-
-    # font = ImageFont.load_default()
-
-    # font = ImageFont.truetype("Tests/fonts/FreeMono.ttf", 84) #ImageFont.load_default()  font = ImageFont.load_default()
-
-color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
-not_id = -1
-# [n for n, c in ImageColor.colormap.items()]
 
 def calculateMahalanobis(y, inv_covmat, y_mu):
     y_mu = y - y_mu
@@ -617,50 +653,7 @@ def main():
         success, _ = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
         print("success : ", success)
         return success
-        if 0:
-            result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
-                                                                                        face_reid.min_face_res,
-                                                                                        face_reid.re_id_method)
-            plot_fn = True
-            all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = face_reid.extract_faces(path_mdf, result_path_good_resolution_faces)
-            # Sprint #4 too few MDFs
-            id_to_mdf_ratio = 4
-            delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
-            no_mdfs = all_embeddings.shape[0]
-            if no_mdfs < (face_reid.re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
-                face_reid.re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), face_reid.re_id_method['min_cluster_size']))
-                print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(face_reid.re_id_method['min_cluster_size']))
-                face_reid.re_id_method['cluster_threshold'] = face_reid.re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
-                face_reid.re_id_method['cluster_threshold'] = float("{:.2f}".format(face_reid.re_id_method['cluster_threshold']))
 
-                print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(re_id_method['cluster_threshold']))
-                result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, face_reid.margin,
-                                                                                            face_reid.min_face_res, face_reid.re_id_method)
-
-            mdf_id_all, labeled_embed = face_reid.re_identification(all_embeddings, mtcnn_cropped_image, names,
-                                                                    mdf_id_all, result_path, face_reid.simillarity_metric)
-
-            if face_reid.re_id_method['method'] == 'dbscan':
-                with open(os.path.join(result_path, 're-id_res_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) +'.pkl'), 'wb') as f:
-                    pickle.dump(mdf_id_all, f)
-                if 1:
-                    with open(os.path.join(result_path, 'face-id_embeddings_embed_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-                        pickle.dump(labeled_embed.embed, f1)
-
-                with open(os.path.join(result_path, 'face-id_embeddings_label_' + str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_'+ str(face_reid.re_id_method['min_cluster_size']) + '.pkl'), 'wb') as f1:
-                    pickle.dump(labeled_embed.label, f1)
-
-            else:
-                raise
-
-            re_id_result_path = os.path.join(result_path, 're_id')
-            if re_id_result_path and not os.path.exists(re_id_result_path):
-                os.makedirs(re_id_result_path)
-
-            plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
-
-
-    
     elif args.task == 'metric_calc':
         result_path_good_resolution_faces, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
                                                                                     face_reid.min_face_res,
