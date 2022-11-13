@@ -202,7 +202,7 @@ class MyTask(PipelineTask):
         # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
         # task actual work
 
-        if save_results_to_db and success:
+        if save_results_to_db and mdf_id_all:
             re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
             insert_json_to_db(movie_db, re_id_json)
         return success, None
