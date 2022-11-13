@@ -103,15 +103,6 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
     reid_json = {'movie_id': movie_id, 'frames': frames, 'urls': urls}
     return reid_json
 
-# def get_movie(self, movie_id):
-#     query = 'FOR doc IN Movies FILTER doc._id == "{}" RETURN doc'.format(movie_id)
-#     cursor = self.db.aql.execute(query)
-#     for data in cursor:
-#         return data
-#     return ({})
-
-
-
 # class PipelineTask(ABC):
 #     @abstractmethod
 #     def process_movie(self, movie_id: str):
@@ -190,8 +181,11 @@ class MyTask(PipelineTask):
                 list_mdfs = dict_tmp['mdfs_path']
         tmp_frame_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH_RESULTS_TO_UPLOAD, movie_name)
         re_id_image_file_web_path = WEB_PATH_SAVE_REID
-        success, re_id_result_path, mdf_id_all = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths, result_path_with_movie=tmp_frame_path,
-                                                    save_results_to_db=True, re_id_image_file_web_path=re_id_image_file_web_path)
+        # Process ReId task
+        success, re_id_result_path, mdf_id_all = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths,
+                                                                                   result_path_with_movie=tmp_frame_path,
+                                                                                   save_results_to_db=True,
+                                                                                   re_id_image_file_web_path=re_id_image_file_web_path)
 
         mdfs_local_dir = re_id_result_path#f'{remote_storage.vp_config.get_local_frames_path()}/{movie_name}'
         mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'

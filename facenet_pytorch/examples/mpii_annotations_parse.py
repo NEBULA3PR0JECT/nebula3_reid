@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw
 import PIL.ImageFont as ImageFont
 import numpy as np
 import PIL.ImageColor as ImageColor
+import pickle
 
 try:
     # font = ImageFont.truetype('arial.ttf', 24)
@@ -18,7 +19,7 @@ except IOError:
     font = ImageFont.truetype(font_path, size=56)
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
 
-
+min_iou = 0.5
 """
 https://datasets.d2.mpi-inf.mpg.de/movieDescription/protected/grounded_characters/README.txt
 = mat
@@ -33,6 +34,29 @@ The "frames" folder contains the extracted video frames mentioned above, provide
 
 """
 
+def bb_intersection_over_union(boxA, boxB):
+    # determine the (x, y)-coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    # compute the area of intersection rectangle
+    interArea = abs(max((xB - xA, 0)) * max((yB - yA), 0))
+    if interArea == 0:
+        return 0
+    # compute the area of both the prediction and ground-truth
+    # rectangles
+    boxAArea = abs((boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
+    boxBArea = abs((boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
+
+    # compute the intersection over union by taking the intersection
+    # area and dividing it by the sum of prediction + ground-truth
+    # areas - the interesection area
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+
+    # return the intersection over union value
+    return iou
 
 def plot_bbox_over_image(file_path, box, id_no_text, result_path):
     text_width, text_height = font.getsize('ID - 1')
@@ -90,82 +114,186 @@ def save_mdfs_to_jpg_from_clip(full_path, mdfs, save_path="/dataset/lsmdc/mdfs_o
 
     return count
 
-save_mdfs_to_target = False
-annotation_path = '/media/mpii_reid/bbox/mat'
-data_set = 'training'
+def main():
+    save_mdfs_to_target = False
+    annotation_path = '/media/mpii_reid/bbox/mat'
+    data_set = 'training'
 
-video_db_path = '/mnt/share'
-# result_annotated_frames_mpii_path = '/home/hanoch/annotated_frames_mpii'
-result_annotated_frames_mpii_path = '/media/mpii_reid/bbox/frames'
-result_path = '/home/hanoch/results/face_reid/face_net/mpii'
+    video_db_path = '/mnt/share'
+    # result_annotated_frames_mpii_path = '/home/hanoch/annotated_frames_mpii'
+    result_annotated_frames_mpii_path = '/media/mpii_reid/bbox/frames'
+    result_path = '/home/hanoch/results/face_reid/face_net/mpii'
 
-path = os.path.join(annotation_path, data_set)
-if not (os.path.isdir(path)):
-    raise ValueError("{} Not mounted hence can not write to that folder ".format(path))
+    path = os.path.join(annotation_path, data_set)
+    if not (os.path.isdir(path)):
+        raise ValueError("{} Not mounted hence can not write to that folder ".format(path))
 
-mat_mov_filenames = [os.path.join(path, x) for x in os.listdir(path)
-             if x.endswith('mat')]
+    mat_mov_filenames = [os.path.join(path, x) for x in os.listdir(path)
+                 if x.endswith('mat')]
 
-if not bool(mat_mov_filenames):
-    raise ValueError('No files at that folder')
+    if not bool(mat_mov_filenames):
+        raise ValueError('No files at that folder')
 
-for file in mat_mov_filenames:
-    # Locate movie clips folder
-    video_name = os.path.basename(file).split('.mat')[0]
-    print("Processing movie : ", video_name)
-    result_path_movie = os.path.join(result_path, video_name)
-    if not os.path.exists(result_path_movie):
-        os.makedirs(result_path_movie)
+    for file in mat_mov_filenames:
+        # Locate movie clips folder
+        video_name = os.path.basename(file).split('.mat')[0]
+        print("Processing movie : ", video_name)
+        result_path_movie = os.path.join(result_path, video_name)
+        if not os.path.exists(result_path_movie):
+            os.makedirs(result_path_movie)
 
-    print("Video : ", video_name)
-    # movie_full_path = subprocess.getoutput('find ' + video_db_path + ' -iname ' + '"*' + video_name + '*"')
-    movie_full_path = subprocess.getoutput('find ' + video_db_path + ' -iname ' + '"*' + video_name + '"')
-    if not movie_full_path:
-        print("File not found", video_name)
+        print("Video : ", video_name)
+        # movie_full_path = subprocess.getoutput('find ' + video_db_path + ' -iname ' + '"*' + video_name + '*"')
+        movie_full_path = subprocess.getoutput('find ' + video_db_path + ' -iname ' + '"*' + video_name + '"')
+        if not movie_full_path:
+            print("File not found", video_name)
 
-    dest_path = os.path.join(result_annotated_frames_mpii_path, video_name)
-    if not os.path.exists(dest_path):
-        os.makedirs(dest_path)
+        dest_path = os.path.join(result_annotated_frames_mpii_path, video_name)
+        if not os.path.exists(dest_path):
+            os.makedirs(dest_path)
 
 
-    annots = loadmat(file)
-    print(annots)
-    n_ids = annots['characters'].shape[0]
-    print("no of characters {}", n_ids)
-    for id in range(n_ids):# per id in movie
-        print("Character name : {}".format(str(annots['characters'][id][0].item())))
-        characters2frames_id = annots['characters2frames'][id, :]
-        clip_name_for_id = characters2frames_id[0][0]
-        frame_no_within_clip_name_for_id = characters2frames_id[0][1]
-        bbox_id_all_clips_movie = annots['characters2boxes'][id, 0]
-        assert (clip_name_for_id.shape[0] == bbox_id_all_clips_movie.shape[1])
+        annots = loadmat(file)
+        print(annots)
+        n_ids = annots['characters'].shape[0]
+        print("no of characters {}", n_ids)
+        for id in range(n_ids):# per id in movie
+            print("Character name : {}".format(str(annots['characters'][id][0].item())))
+            characters2frames_id = annots['characters2frames'][id, :]
+            clip_name_for_id = characters2frames_id[0][0]
+            frame_no_within_clip_name_for_id = characters2frames_id[0][1]
+            bbox_id_all_clips_movie = annots['characters2boxes'][id, 0]
+            assert (clip_name_for_id.shape[0] == bbox_id_all_clips_movie.shape[1])
 
-        for ix , (clip, frame) in enumerate(zip(clip_name_for_id, frame_no_within_clip_name_for_id)):
-            print(clip, frame)
-            src_path_movie = os.path.join(movie_full_path, str(clip.astype(object)[0]) + '.avi')
-            # dest_path_frame = dest_path + frame[0]
-            if save_mdfs_to_target:
-                mdfs = [frame[0].astype('int') - 1]
-                save_mdfs_to_jpg_from_clip(full_path=src_path_movie, mdfs=mdfs, save_path=dest_path)
-            else: # extract frames from MPII frames
-                full_path_modified = src_path_movie.split("/")[-1].replace(".avi", "")
-                # mdf_fname = os.path.join(dest_path, full_path_modified + '-' + str(str(frame[0])) + '.jpg')
-                frame_name = full_path_modified + '-' + str(str(frame[0]))
-                frame_full_path = subprocess.getoutput('find ' + dest_path + ' -iname ' + '"*' + frame_name + '*"')
-                if not frame_full_path:
-                    print("File not found", video_name)
-                if '\n' in frame_full_path:
-                    frame_full_path = frame_full_path.split('\n')[0]
+            for ix , (clip, frame) in enumerate(zip(clip_name_for_id, frame_no_within_clip_name_for_id)):
+                print(clip, frame)
+                src_path_movie = os.path.join(movie_full_path, str(clip.astype(object)[0]) + '.avi')
+                # dest_path_frame = dest_path + frame[0]
+                if save_mdfs_to_target:
+                    mdfs = [frame[0].astype('int') - 1]
+                    save_mdfs_to_jpg_from_clip(full_path=src_path_movie, mdfs=mdfs, save_path=dest_path)
+                else: # extract frames from MPII frames
+                    full_path_modified = src_path_movie.split("/")[-1].replace(".avi", "")
+                    # mdf_fname = os.path.join(dest_path, full_path_modified + '-' + str(str(frame[0])) + '.jpg')
+                    frame_name = full_path_modified + '-' + str(str(frame[0]))
+                    frame_full_path = subprocess.getoutput('find ' + dest_path + ' -iname ' + '"*' + frame_name + '*"')
+                    if not frame_full_path:
+                        print("File not found", video_name)
+                    if '\n' in frame_full_path:
+                        frame_full_path = frame_full_path.split('\n')[0]
 
-                bbox1 = bbox_id_all_clips_movie[:, ix].astype('float')
-                prop_bbox = np.array([bbox1[0] , bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
-                plot_bbox_over_image(file_path=frame_full_path, box=prop_bbox,
-                                     id_no_text=id, result_path=result_path_movie)
-                # img = Image.open(mdf_fname)
+                    bbox1 = bbox_id_all_clips_movie[:, ix].astype('float')
+                    prop_bbox = np.array([bbox1[0] , bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
+                    plot_bbox_over_image(file_path=frame_full_path, box=prop_bbox,
+                                         id_no_text=id, result_path=result_path_movie)
+                    # img = Image.open(mdf_fname)
 
-        # subprocess.getoutput('cp -p ' + src_path_movie + ' ' + dest_path_frame)
+            # subprocess.getoutput('cp -p ' + src_path_movie + ' ' + dest_path_frame)
 
-    frame_no_within_clip_name_for_id = characters2frames_id[0][1]
-    for clip, frame in zip(clip_name_for_id, frame_no_within_clip_name_for_id):
-        print(clip, frame)
 
+def calc_precision_recall():
+    data_set = 'training'
+
+    annotated_frames_mpii_path = '/media/mpii_reid/bbox/frames'
+    # result_path = '/home/hanoch/results/face_reid/face_net/mpii'
+    annotation_path = '/media/mpii_reid/bbox/mat'
+
+    path = os.path.join(annotation_path, data_set)
+
+    if not (os.path.isdir(path)):
+        raise ValueError("{} Not mounted hence can not write to that folder ".format(path))
+
+    mat_mov_filenames = [os.path.join(path, x) for x in os.listdir(path)
+                 if x.endswith('mat')]
+
+    if not bool(mat_mov_filenames):
+        raise ValueError('No files at that folder')
+
+    for mat_file in mat_mov_filenames:
+        # Locate movie clips folder
+        video_name = os.path.basename(mat_file).split('.mat')[0]
+        print("Processing movie : ", video_name)
+        detection_path = '/home/hanoch/results/face_reid/face_net'
+        movie_pkl_path = os.path.join(detection_path, video_name)
+        # '/1059_The_devil_wears_prada/method_dbscan_res_128_margin_40_eps_0.27_KNN_5'
+        reid_dict_pkl_full_path_s = subprocess.getoutput('find ' + movie_pkl_path + ' -iname ' + '"*' + 're-id_res_' + '*"')
+        if not reid_dict_pkl_full_path_s:
+            print("File not found", reid_dict_pkl_full_path_s)
+            continue
+        # reid_dict_file = 're-id_res_128_0.95_eps_0.27_KNN_5.pkl'
+        # pkl_path = os.path.join(detection_path, reid_dict_file)
+        # Open detected/classified faces
+        if '\n' in reid_dict_pkl_full_path_s:
+            reid_dict_pkl_full_path_s = reid_dict_pkl_full_path_s.split('\n')
+        else:
+            reid_dict_pkl_full_path_s = [reid_dict_pkl_full_path_s]
+
+        for reid_dict_pkl_full_path in reid_dict_pkl_full_path_s: # few results per movie
+            with open(reid_dict_pkl_full_path, 'rb') as f:
+                mdf_face_id_all = pickle.load(f)
+            print("ReId settings", os.path.basename(reid_dict_pkl_full_path))
+
+            annots = loadmat(mat_file)
+            n_ids = annots['characters'].shape[0]
+            print("no of characters {}", n_ids)
+            # RECALL : Percentage of GT that appears in frames/MDFs: Go over the GT list find the IOU>0.5 over classified faces bbox
+            # + make sure all classification belongs to the same ID otherwise it is just detection and multiple IDs (hard positives) will not be detected
+            false_negatives = 0
+            true_positives = 0
+            detected_but_not_classified = 0
+            id_annotations = 0
+            for id in range(n_ids):# per id in movie over all clips
+                detected_id = list()
+                print("Character name : {}".format(str(annots['characters'][id][0].item())))
+                characters2frames_id = annots['characters2frames'][id, :]
+                clip_name_for_id = characters2frames_id[0][0]
+                frame_no_within_clip_name_for_id = characters2frames_id[0][1]
+                bbox_id_all_clips_movie = annots['characters2boxes'][id, 0]
+                id_annotations += clip_name_for_id.shape[0]
+                assert (clip_name_for_id.shape[0] == bbox_id_all_clips_movie.shape[1])
+
+                for ix, (clip, frame) in enumerate(zip(clip_name_for_id, frame_no_within_clip_name_for_id)):
+                    # print(clip, frame)
+                    bbox1 = bbox_id_all_clips_movie[:, ix].astype('float')
+                    prop_bbox = np.array([bbox1[0], bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
+
+                    frame_fname = str(clip.astype(object)[0]) + '-' + str(frame[0]) + '.jpg'
+                    # Find frmae in detections
+                    frame_dict_value = mdf_face_id_all.get(frame_fname, -1)
+                    if frame_dict_value == -1:
+                        false_negatives += 1
+                    else:
+                        max_iou = 0
+                        det_id_in_frame = False
+                        for det_ids in list(frame_dict_value.values()):
+                            iou = bb_intersection_over_union(det_ids['bbox'], prop_bbox)
+                            if iou > max_iou:
+                                max_iou = iou
+                                if iou>0.5:
+                                    if det_ids['id'] == -1:
+                                        false_negatives += 1
+                                        detected_but_not_classified += 1
+                                        print("Id detected but not classified ", frame_fname,
+                                              annots['characters'][id][0].item(0))
+                                    else:
+                                        true_positives += 1
+                                        det_id_in_frame = True
+                                        detected_id.append(det_ids['id'])
+                        if not det_id_in_frame:
+                            false_negatives += 1
+
+                uniqu_id, c = np.unique(detected_id, return_counts=True)
+
+                if uniqu_id.shape[0]>1:
+                    warnings.warn("Substitution of IDs :{} times: {}".format(uniqu_id, c))
+            recall = true_positives/(true_positives + false_negatives)
+            print("ID {} no {} true_positives {}, false_negatives {} recall {} detected_but_not_classified ratio {} ".format(annots['characters'][id][0].item(0), id, true_positives, false_negatives, recall, detected_but_not_classified/(id_annotations)))
+        # PRECISION :
+
+    return
+
+if __name__ == '__main__':
+    if 1:
+        calc_precision_recall()
+    else:
+        main()

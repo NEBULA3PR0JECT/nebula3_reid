@@ -27,7 +27,8 @@ import cv2
 import re
 from collections import Counter
 import pandas as pd
-
+import glob
+import subprocess
 # test
 # from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
 from examples.clustering import hdbscan_dbscan_cluster, _chinese_whispers, hdbscan_cluster
@@ -44,6 +45,7 @@ import warnings
 
 operational_mode = False #False # True:default param
 # @@HK for Ghandi : min_face_res=128 where dense MDF incease filtering otherwise minor characters clutter the face classification
+
 
 class EmbeddingsCollect():
     def __init__(self):
@@ -66,19 +68,29 @@ color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:]
 not_id = -1
 # [n for n, c in ImageColor.colormap.items()]
 
+def print_arguments(args):
+    """Print the specified map object ordered by key; one line per mapping"""
+    header = "Command line arguments:"
+    print('\n' + header)
+    print(len(header) * '-')
+    args_dict = vars(args)
+    arguments_str = '\n'.join(["{}: {}".format(key, args_dict[key]) for key in sorted(args_dict)])
+    print(arguments_str + '\n')
+
 
 class FaceReId:
 
     # init method or constructor
     def __init__(self, margin=40, min_face_res=96, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
-                 prob_th_filter_blurr=0.95, batch_size=128):
+                 prob_th_filter_blurr=0.95, batch_size=128, plot_fn=False):
         self.margin = margin
         self.min_face_res = min_face_res
         self.prob_th_filter_blurr = prob_th_filter_blurr
         self.re_id_method = re_id_method
         self.batch_size = batch_size
         self.simillarity_metric = simillarity_metric
+        self.plot_fn = plot_fn
     # Sample Method
     def extract_faces(self, path_mdf, result_path_good_resolution_faces,
                       plot_cropped_faces=False):
@@ -86,7 +98,7 @@ class FaceReId:
 
         # TODO result_path_good_resolution_faces_frontal =  # filter profile
         # plt.savefig('/home/hanoch/notebooks/nebula3_reid/face_tens.png')
-        workers = 0 if os.name == 'nt' else 4
+        # workers = 0 if os.name == 'nt' else 4
         device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         print('Running on device: {}'.format(device))
         #### Define MTCNN module
@@ -116,14 +128,16 @@ class FaceReId:
         names = list()
         mtcnn_cropped_image = list()
 
-        filenames = [os.path.join(path_mdf, x) for x in os.listdir(path_mdf)
-                     if x.endswith('png') or x.endswith('jpg')]
-        if not bool(filenames):
+        # mdf_filenames = [os.path.join(path_mdf, x) for x in os.listdir(path_mdf)
+        #                     if x.endswith('png') or x.endswith('jpg')]
+
+        mdf_filenames = glob.glob(path_mdf + '/**/*.jpg', recursive=True) + glob.glob(path_mdf + '/**/*.png', recursive=True)
+        if not bool(mdf_filenames):
             raise ValueError('No files at that folder')
 
         status = True
         mdf_id_all = dict()
-        for file_inx, file in enumerate(tqdm.tqdm(sorted(filenames))):
+        for file_inx, file in enumerate(tqdm.tqdm(sorted(mdf_filenames))):
             try:
                 img = Image.open(file)  # print(Image.core.jpeglib_version) ver 9.0 on conda different jpeg decoding  '3001_21_JUMP_STREET_00.03.13.271-00.03.16.551'
             except Exception as e:
@@ -223,7 +237,7 @@ class FaceReId:
         elif self.re_id_method['method'] == 'dbscan' or self.re_id_method['method'] == 'hdbscan':  # @@HK TODO: use the method db.fit_predict() to predict additional embeddings class given the dnscan object inside dbscan_cluster
             clusters = hdbscan_dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
                             out_dir=dbscan_result_path, cluster_threshold=self.re_id_method['cluster_threshold'],
-                            min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric)
+                            min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric, method=self.re_id_method['method'])
             # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
             n_clusters = len([i[0] for i in clusters.items()])
 
@@ -309,7 +323,7 @@ class FaceReId:
             warnings.warn(
                 "MDF path {} does not exist !!!! ".format(path_mdf))
             status = False
-            return status
+            return status, None, None
 
         movie_name = os.path.basename(path_mdf)
         self.result_path_with_movie = result_path_with_movie
@@ -332,10 +346,10 @@ class FaceReId:
                                                                                     self.min_face_res,
                                                                                     self.re_id_method)
 
-        plot_fn = False
+        # plot_fn = self.plot_fn
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
         if not (status):
-            return True, None # have to return Tru otherwise workflow gradient pipeline gen exception
+            return True, None, None # have to return Tru otherwise workflow gradient pipeline gen exception
 
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
@@ -378,7 +392,7 @@ class FaceReId:
             os.makedirs(re_id_result_path)
 
         print("MDFs with reid marked on : {}".format(re_id_result_path))
-        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
+        plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=self.plot_fn)
         # if save_results_to_db:
         #     re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, 're_id')
 
@@ -526,7 +540,14 @@ def plot_id_over_mdf(mdf_id_all, result_path, path_mdf, plot_fn=False): # FN plo
     text_width, text_height = font.getsize('ID - 1')
 
     for file, ids_desc_all_clip_mdfs in tqdm.tqdm(mdf_id_all.items()):
-        file_path = os.path.join(path_mdf, file)
+
+        file_path = subprocess.getoutput('find ' + path_mdf + ' -iname ' + '"*' + file + '"') # handling nested folders
+        if not file_path:
+            print("File not found", file)
+        if '\n' in file_path:
+            file_path = file_path.split('\n')[0]
+
+        # file_path = os.path.join(path_mdf, file)
         img = Image.open(file_path)
         img_draw = img.copy()
         draw = ImageDraw.Draw(img_draw)
@@ -622,9 +643,19 @@ def main():
                         metavar='STRING', help='')
 
 
+
+    parser.add_argument('--plot-fn', action='store_true',
+                         help='Plot False negatives over the reID image debug results')
+
     parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
     args = parser.parse_args()
+
+
+    print_arguments(args)
+
+    result_dict = dict()
+    result_dict.update(vars(args))
 
     result_path_with_movie = os.path.join(args.result_path, args.movie)
     path_mdf = args.path_mdf
@@ -637,20 +668,27 @@ def main():
     batch_size = batch_size if torch.cuda.is_available() else 0
     re_id_method = {'method': args.reid_method, 'cluster_threshold': args.cluster_threshold, 'min_cluster_size': args.min_cluster_size}#0.4}
 
-    if operational_mode:
-        print("!!!!!!!  For demo algorithm params were set to defaults  !!!!!!!!!!! R U Sure")
-        face_reid = FaceReId()
-    else:
-        face_reid = FaceReId(margin=margin, min_face_res=min_face_res,
-                             re_id_method=re_id_method,
-                             simillarity_metric=args.simillarity_metric,
-                             prob_th_filter_blurr=prob_th_filter_blurr,
-                             batch_size=batch_size)
+# if operational_mode:
+#     print("!!!!!!!  For demo algorithm params were set to defaults  !!!!!!!!!!! R U Sure")
+#     face_reid = FaceReId()
+# else:
+    face_reid = FaceReId(margin=margin, min_face_res=min_face_res,
+                         re_id_method=re_id_method,
+                         simillarity_metric=args.simillarity_metric,
+                         prob_th_filter_blurr=prob_th_filter_blurr,
+                         batch_size=batch_size,
+                         plot_fn=args.plot_fn)
 
     print("Settings margin :{} min_face_res{} re_id_method {} simillarity_metric {}".format(face_reid.margin,
                                                                                             face_reid.min_face_res, face_reid.re_id_method, face_reid.simillarity_metric))
     if args.task == 'classify_faces':
-        success, _ = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
+        success, re_id_result_path, _ = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
+        if re_id_result_path  != None:
+            import pandas as pd
+            df_result = pd.DataFrame.from_dict(list(result_dict.items()))
+            df_result = df_result.transpose()
+            df_result.to_csv(os.path.join(os.path.dirname(re_id_result_path), 'setup.csv'), index=False)
+
         print("success : ", success)
         return success
 
@@ -687,8 +725,8 @@ def main():
 
         print("similarity based UMAP", args.simillarity_metric)
 
-        plot_fn = True
-        if plot_fn:
+
+        if args.plot_fn:
             import pandas as pd
             path_fn = '/home/hanoch/results/face_reid/face_net/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/FN/FN_0001_American_Beauty.csv'#'/home/hanoch/notebooks/nebula3_reid/annotations/FN_0001_American_Beauty.csv'
             df = pd.read_csv(path_fn, index_col=False)  # , dtype={'id': 'str'})
@@ -792,8 +830,7 @@ def main():
             if re_id_result_path and not os.path.exists(re_id_result_path):
                 os.makedirs(re_id_result_path)
 
-            plot_fn = True
-            plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=plot_fn)
+            plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=args.plot_fn)
         else:
             re_id_result_path = os.path.join(args.result_path, 're_id')
             plot_id_over_mdf(mdf_face_id_all, result_path=re_id_result_path, path_mdf=path_mdf)
