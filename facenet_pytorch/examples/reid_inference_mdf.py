@@ -91,6 +91,8 @@ class FaceReId:
         self.batch_size = batch_size
         self.simillarity_metric = simillarity_metric
         self.plot_fn = plot_fn
+        self.delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1 # heuristic
+
     # Sample Method
     def extract_faces(self, path_mdf, result_path_good_resolution_faces,
                       plot_cropped_faces=False):
@@ -241,15 +243,24 @@ class FaceReId:
             # when cosine dist ->higher =>more out of cluster(non core points) are gathered and became core points as in clusters hence need to increase the K-NN, cluster size
             n_clusters = len([i[0] for i in clusters.items()])
 
-            if n_clusters <= 2:
+            if n_clusters < 2:
                 warning("too few classes/IDs < 2 !!!")
             if clusters:
                 print("Total {} clusters and total appeared IDs {}".format(n_clusters,
                                             np.concatenate([x[1] for x in clusters.items()]).shape[0]))
-            else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID
-                print("Re run Re-ID : Could not find recurrent ID assume single ID per MDF - minimal min_cluster_size(K-NN)=1 performance not guaranteed!!!")
-                self.re_id_method['min_cluster_size'] = 1
+            else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID min_cluster_size=1 is not valid cuz no reID in single ID appearance
+                print("Re run Re-ID : Could not find recurrent ID assume single ID per MDF - minimal min_cluster_size(K-NN)= ceil(min_cluster_size/2) performance not guaranteed!!!")
+                if self.re_id_method['method'] == 'dbscan':
+                    self.re_id_method['min_cluster_size'] = int(1 + self.re_id_method['min_cluster_size']/2)
+                    self.re_id_method['cluster_threshold'] = self.re_id_method[
+                                                                 'cluster_threshold'] + self.delta_thr_sparse_mdfs/2
+                    self.re_id_method['cluster_threshold'] = float(
+                        "{:.2f}".format(self.re_id_method['cluster_threshold']))
 
+                elif self.re_id_method['method'] == 'hdbscan':
+                    pass
+                else:
+                    raise
                 clusters = hdbscan_dbscan_cluster(images=mtcnn_cropped_image, matrix=all_embeddings,
                                 out_dir=dbscan_result_path, cluster_threshold=self.re_id_method['cluster_threshold'],
                                 min_cluster_size=self.re_id_method['min_cluster_size'], metric=metric,
@@ -353,12 +364,11 @@ class FaceReId:
 
         # Sprint #4 too few MDFs
         id_to_mdf_ratio = 4
-        delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1
         no_mdfs = all_embeddings.shape[0]
         if no_mdfs < (self.re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
             self.re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), self.re_id_method['min_cluster_size']))
             print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(self.re_id_method['min_cluster_size']))
-            self.re_id_method['cluster_threshold'] = self.re_id_method['cluster_threshold'] + delta_thr_sparse_mdfs
+            self.re_id_method['cluster_threshold'] = self.re_id_method['cluster_threshold'] + self.delta_thr_sparse_mdfs
             self.re_id_method['cluster_threshold'] = float("{:.2f}".format(self.re_id_method['cluster_threshold']))
 
             print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(self.re_id_method['cluster_threshold']))

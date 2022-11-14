@@ -10,6 +10,8 @@ import PIL.ImageFont as ImageFont
 import numpy as np
 import PIL.ImageColor as ImageColor
 import pickle
+import pandas as pd
+import glob
 
 try:
     # font = ImageFont.truetype('arial.ttf', 24)
@@ -192,104 +194,129 @@ def main():
 
 
 def calc_precision_recall():
-    data_set = 'training'
+    data_sets = ['training', 'val', 'test']
 
     annotated_frames_mpii_path = '/media/mpii_reid/bbox/frames'
     # result_path = '/home/hanoch/results/face_reid/face_net/mpii'
     annotation_path = '/media/mpii_reid/bbox/mat'
+    detection_path = '/home/hanoch/results/face_reid/face_net'
 
-    path = os.path.join(annotation_path, data_set)
+    summary_list = list()
+    for data_set in data_sets:
+        path = os.path.join(annotation_path, data_set)
 
-    if not (os.path.isdir(path)):
-        raise ValueError("{} Not mounted hence can not write to that folder ".format(path))
+        if not (os.path.isdir(path)):
+            raise ValueError("{} Not mounted hence can not write to that folder ".format(path))
 
-    mat_mov_filenames = [os.path.join(path, x) for x in os.listdir(path)
-                 if x.endswith('mat')]
+        mat_mov_filenames = [os.path.join(path, x) for x in os.listdir(path)
+                     if x.endswith('mat')]
 
-    if not bool(mat_mov_filenames):
-        raise ValueError('No files at that folder')
 
-    for mat_file in mat_mov_filenames:
-        # Locate movie clips folder
-        video_name = os.path.basename(mat_file).split('.mat')[0]
-        print("Processing movie : ", video_name)
-        detection_path = '/home/hanoch/results/face_reid/face_net'
-        movie_pkl_path = os.path.join(detection_path, video_name)
-        # '/1059_The_devil_wears_prada/method_dbscan_res_128_margin_40_eps_0.27_KNN_5'
-        reid_dict_pkl_full_path_s = subprocess.getoutput('find ' + movie_pkl_path + ' -iname ' + '"*' + 're-id_res_' + '*"')
-        if not reid_dict_pkl_full_path_s:
-            print("File not found", reid_dict_pkl_full_path_s)
-            continue
-        # reid_dict_file = 're-id_res_128_0.95_eps_0.27_KNN_5.pkl'
-        # pkl_path = os.path.join(detection_path, reid_dict_file)
-        # Open detected/classified faces
-        if '\n' in reid_dict_pkl_full_path_s:
-            reid_dict_pkl_full_path_s = reid_dict_pkl_full_path_s.split('\n')
-        else:
-            reid_dict_pkl_full_path_s = [reid_dict_pkl_full_path_s]
+        if not bool(mat_mov_filenames):
+            raise ValueError('No files at that folder')
 
-        for reid_dict_pkl_full_path in reid_dict_pkl_full_path_s: # few results per movie
-            with open(reid_dict_pkl_full_path, 'rb') as f:
-                mdf_face_id_all = pickle.load(f)
-            print("ReId settings", os.path.basename(reid_dict_pkl_full_path))
+        for mat_file in mat_mov_filenames:
+            # Locate movie clips folder
+            video_name = os.path.basename(mat_file).split('.mat')[0]
+            print("Processing movie : ", video_name)
+            movie_pkl_path = os.path.join(detection_path, video_name)
+            # '/1059_The_devil_wears_prada/method_dbscan_res_128_margin_40_eps_0.27_KNN_5'
+            reid_dict_pkl_full_path_s = subprocess.getoutput('find ' + movie_pkl_path + ' -iname ' + '"*' + 're-id_res_' + '*"')
+            if not reid_dict_pkl_full_path_s:
+                print("File not found", reid_dict_pkl_full_path_s)
+                continue
+            # reid_dict_file = 're-id_res_128_0.95_eps_0.27_KNN_5.pkl'
+            # pkl_path = os.path.join(detection_path, reid_dict_file)
+            # Open detected/classified faces
+            if '\n' in reid_dict_pkl_full_path_s:
+                reid_dict_pkl_full_path_s = reid_dict_pkl_full_path_s.split('\n')
+            else:
+                reid_dict_pkl_full_path_s = [reid_dict_pkl_full_path_s]
 
-            annots = loadmat(mat_file)
-            n_ids = annots['characters'].shape[0]
-            print("no of characters {}", n_ids)
-            # RECALL : Percentage of GT that appears in frames/MDFs: Go over the GT list find the IOU>0.5 over classified faces bbox
-            # + make sure all classification belongs to the same ID otherwise it is just detection and multiple IDs (hard positives) will not be detected
-            false_negatives = 0
-            true_positives = 0
-            detected_but_not_classified = 0
-            id_annotations = 0
-            for id in range(n_ids):# per id in movie over all clips
-                detected_id = list()
-                print("Character name : {}".format(str(annots['characters'][id][0].item())))
-                characters2frames_id = annots['characters2frames'][id, :]
-                clip_name_for_id = characters2frames_id[0][0]
-                frame_no_within_clip_name_for_id = characters2frames_id[0][1]
-                bbox_id_all_clips_movie = annots['characters2boxes'][id, 0]
-                id_annotations += clip_name_for_id.shape[0]
-                assert (clip_name_for_id.shape[0] == bbox_id_all_clips_movie.shape[1])
+            for reid_dict_pkl_full_path in reid_dict_pkl_full_path_s: # few results per movie
+                with open(reid_dict_pkl_full_path, 'rb') as f:
+                    mdf_face_id_all = pickle.load(f)
+                print("ReId settings", os.path.basename(reid_dict_pkl_full_path))
+                # csv load and get setup
+                csv_path = os.path.dirname(reid_dict_pkl_full_path)
+                try:
+                    df_res = pd.read_csv(os.path.join(csv_path, 'setup.csv'), index_col=False)
+                except Exception as e:
+                    print(e)
+                    continue
+                new_header = df_res.iloc[0]  # grab the first row for the header
+                df_res = df_res[1:]  # take the data less the header row
+                df_res.columns = new_header
 
-                for ix, (clip, frame) in enumerate(zip(clip_name_for_id, frame_no_within_clip_name_for_id)):
-                    # print(clip, frame)
-                    bbox1 = bbox_id_all_clips_movie[:, ix].astype('float')
-                    prop_bbox = np.array([bbox1[0], bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
 
-                    frame_fname = str(clip.astype(object)[0]) + '-' + str(frame[0]) + '.jpg'
-                    # Find frmae in detections
-                    frame_dict_value = mdf_face_id_all.get(frame_fname, -1)
-                    if frame_dict_value == -1:
-                        false_negatives += 1
-                    else:
-                        max_iou = 0
-                        det_id_in_frame = False
-                        for det_ids in list(frame_dict_value.values()):
-                            iou = bb_intersection_over_union(det_ids['bbox'], prop_bbox)
-                            if iou > max_iou:
-                                max_iou = iou
-                                if iou>0.5:
-                                    if det_ids['id'] == -1:
-                                        false_negatives += 1
-                                        detected_but_not_classified += 1
-                                        print("Id detected but not classified ", frame_fname,
-                                              annots['characters'][id][0].item(0))
-                                    else:
-                                        true_positives += 1
-                                        det_id_in_frame = True
-                                        detected_id.append(det_ids['id'])
-                        if not det_id_in_frame:
+                annots = loadmat(mat_file)
+                n_ids = annots['characters'].shape[0]
+                print("no of characters {}", n_ids)
+                # RECALL : Percentage of GT that appears in frames/MDFs: Go over the GT list find the IOU>0.5 over classified faces bbox
+                # + make sure all classification belongs to the same ID otherwise it is just detection and multiple IDs (hard positives) will not be detected
+                false_negatives = 0
+                true_positives = 0
+                detected_but_not_classified = 0
+                id_annotations = 0
+                for id in range(n_ids):# per id in movie over all clips
+                    detected_id = list()
+                    print("Character name : {}".format(str(annots['characters'][id][0].item())))
+                    characters2frames_id = annots['characters2frames'][id, :]
+                    clip_name_for_id = characters2frames_id[0][0]
+                    if clip_name_for_id.size == 0:
+                        print("video_name : missing Id annotations ", video_name)
+                        continue
+                    frame_no_within_clip_name_for_id = characters2frames_id[0][1]
+                    bbox_id_all_clips_movie = annots['characters2boxes'][id, 0]
+                    id_annotations += clip_name_for_id.shape[0]
+                    assert (clip_name_for_id.shape[0] == bbox_id_all_clips_movie.shape[1])
+
+                    for ix, (clip, frame) in enumerate(zip(clip_name_for_id, frame_no_within_clip_name_for_id)):
+                        # print(clip, frame)
+                        bbox1 = bbox_id_all_clips_movie[:, ix].astype('float')
+                        prop_bbox = np.array([bbox1[0], bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
+
+                        frame_fname = str(clip.astype(object)[0]) + '-' + str(frame[0]) + '.jpg'
+                        # Find frmae in detections
+                        frame_dict_value = mdf_face_id_all.get(frame_fname, -1)
+                        if frame_dict_value == -1:
                             false_negatives += 1
+                        else:
+                            max_iou = 0
+                            det_id_in_frame = False
+                            for det_ids in list(frame_dict_value.values()):
+                                iou = bb_intersection_over_union(det_ids['bbox'], prop_bbox)
+                                if iou > max_iou:
+                                    max_iou = iou
+                                    if iou>0.5:
+                                        if det_ids['id'] == -1:
+                                            false_negatives += 1
+                                            detected_but_not_classified += 1
+                                            print("Id detected but not classified ", frame_fname,
+                                                  annots['characters'][id][0].item(0))
+                                        else:
+                                            true_positives += 1
+                                            det_id_in_frame = True
+                                            detected_id.append(det_ids['id'])
+                            if not det_id_in_frame:
+                                false_negatives += 1
 
-                uniqu_id, c = np.unique(detected_id, return_counts=True)
+                    uniqu_id, c = np.unique(detected_id, return_counts=True)
 
-                if uniqu_id.shape[0]>1:
-                    warnings.warn("Substitution of IDs :{} times: {}".format(uniqu_id, c))
-            recall = true_positives/(true_positives + false_negatives)
-            print("ID {} no {} true_positives {}, false_negatives {} recall {} detected_but_not_classified ratio {} ".format(annots['characters'][id][0].item(0), id, true_positives, false_negatives, recall, detected_but_not_classified/(id_annotations)))
-        # PRECISION :
+                    if uniqu_id.shape[0]>1:
+                        warnings.warn("Substitution of IDs :{} times: {}".format(uniqu_id, c))
+                recall = true_positives/(true_positives + false_negatives)
+                res_dict = dict()
+                res_dict.update({'tp': true_positives, 'fn': false_negatives, 'recall': recall, 'detected_but_not_classified ratio': detected_but_not_classified/(id_annotations)})
+                res_dict.update({'mtcnn_margin': df_res.mtcnn_margin.item(), 'min_face_res': df_res.min_face_res.item(), 'dbscan_eps' : df_res.cluster_threshold.item()})
+                res_dict.update({"min_cluster_size": df_res.min_cluster_size.item(), 'reid_method': df_res.reid_method.item(), 'min_cluster_size': df_res.min_cluster_size.item()})
+                res_dict.update({'video_name': video_name})
 
+                summary_list.append(res_dict)
+                print("ID {} no {} true_positives {}, false_negatives {} recall {} detected_but_not_classified ratio {} ".format(annots['characters'][id][0].item(0), id, true_positives, false_negatives, recall, detected_but_not_classified/(id_annotations)))
+            # PRECISION :
+    df = pd.DataFrame(summary_list)
+    df.to_csv(os.path.join(detection_path, 'precision_recall.csv'), index=False)
     return
 
 if __name__ == '__main__':

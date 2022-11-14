@@ -21,6 +21,7 @@ transform = T.ToPILImage()
 import hdbscan
 # np.where(np.nonzero(db.labels_==0)[0]==457) np.where(np.nonzero(db.labels_==0)[0]==458)
 # pairwise_similarity = np.matmul(matrix[np.nonzero(db.labels_==0)[0], :],matrix[np.nonzero(db.labels_==0)[0], :].T)  # aka gram matrix
+plot_hdbscan = False
 def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
                     min_cluster_size=1, largest_cluster_only=False, save_images=True, metric='euclidean', method='dbscan'):
 
@@ -28,14 +29,23 @@ def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
     precomputed = False
 
     if method == 'hdbscan' and metric == 'cosine':
-        precomputed = True
-        dist = distance.cdist(matrix, matrix, metric='cosine')
-        metric = 'precomputed'
+        if 0:
+            metric = 'euclidean'
+        else:
+            precomputed = True
+            dist = distance.cdist(matrix, matrix, metric='cosine')
+            metric = 'precomputed'
 
     if method == 'hdbscan':
-        db = hdbscan.HDBSCAN(algorithm='best', alpha=1.0, approx_min_span_tree=True,
+        db = hdbscan.HDBSCAN(algorithm='best', approx_min_span_tree=True,
                 gen_min_span_tree=True, leaf_size=40, # memory=Memory(cachedir=None)
-                metric=metric, min_cluster_size=5, min_samples=None, p=None)  # TODO : try arccos metric
+                metric=metric, min_cluster_size=min_cluster_size, min_samples=None, p=None)  # TODO : try arccos metric
+
+        if plot_hdbscan:
+            db.condensed_tree_.plot() #https://hdbscan.readthedocs.io/en/latest/advanced_hdbscan.html?highlight=clusterer.condensed_tree_.plot#condensed-trees
+            import seaborn as sns
+            db.condensed_tree_.plot(select_clusters=True,
+                                           selection_palette=sns.color_palette('deep', 8))
     elif method == 'dbscan':
         # DBSCAN is the only algorithm that doesn't require the number of clusters to be defined.
         db = DBSCAN(eps=cluster_threshold, min_samples=min_cluster_size, metric=metric)  # , metric='precomputed')
