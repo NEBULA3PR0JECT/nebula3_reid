@@ -83,7 +83,7 @@ class FaceReId:
     # init method or constructor
     def __init__(self, margin=40, min_face_res=96, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
-                 prob_th_filter_blurr=0.95, batch_size=128, plot_fn=False):
+                 prob_th_filter_blurr=0.95, batch_size=128, plot_fn=False, recluster_hard_positives=False):
         self.margin = margin
         self.min_face_res = min_face_res
         self.prob_th_filter_blurr = prob_th_filter_blurr
@@ -92,6 +92,10 @@ class FaceReId:
         self.simillarity_metric = simillarity_metric
         self.plot_fn = plot_fn
         self.delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1 # heuristic
+        self.recluster_hard_positives = recluster_hard_positives
+        # hard positives which are farther away from their cluster
+        self.min_prob_hard_pos_reassign = 0.99
+        self.min_res_hard_pos_reassign = 256**2
 
     # Sample Method
     def extract_faces(self, path_mdf, result_path_good_resolution_faces,
@@ -157,8 +161,8 @@ class FaceReId:
                     status = False
                     continue
 
-            face_id = dict()
             if x_aligned is not None:
+                face_id = dict()
                 if len(x_aligned.shape) == 3:
                     x_aligned = x_aligned.unsqueeze(0)
                     prob = np.array([prob])
@@ -195,13 +199,20 @@ class FaceReId:
                         if 0:  # save MDFs
                             cv2.imwrite(os.path.join(result_path, str(crop_inx) + '_' + os.path.basename(file)),
                                         img2)  # (image * 255).astype(np.uint8))#(inp * 255).astype(np.uint8))
-                        aligned.append(x_aligned[crop_inx, :, :, :])
-                        fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
-                        names.append(fname)
-                        face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1, 'prob': prob[crop_inx]}})
+                        is_exist_key_in_dict = mdf_id_all.get(os.path.basename(file), None) # in MPii dataset same image can appear in few IDs folders hence replicated names list
+                        if is_exist_key_in_dict is None: # No worries for the mdf_id_all dictionary it will be overwridden by the same image re-processed
+                            aligned.append(x_aligned[crop_inx, :, :, :])
+                            fname = str(file_inx) + '_' + '_face_{}'.format(crop_inx) + '_' + os.path.basename(file)
+                            names.append(fname)
+                            face_id.update({fname: {'bbox': batch_boxes[crop_inx], 'id': -1, 'gt': -1, 'prob': prob[crop_inx]}})
                         # print('Face detected with probability: {:8f}'.format(prob[crop_inx]))
                 if bool(face_id):  # Cases where none of the prob>th
                     mdf_id_all.update({os.path.basename(file): face_id})
+
+        a = 0
+        for k1, v1 in mdf_id_all.items():
+            a += len(list(v1))
+        assert (a == len(names)) # should be complied
 
         if aligned == []:
             warnings.warn(
@@ -274,7 +285,7 @@ class FaceReId:
         else:
             raise
         labeled_embed = EmbeddingsCollect()
-
+        # Assign clustering ID to movie dictionary
         for mdf, id_v in mdf_id_all.items():
             mdf_id_list_phantom_id = list()
             mdf_id_dict_phantom_max_prob = dict()
@@ -283,9 +294,9 @@ class FaceReId:
                 if k in names:
                     ix = names.index(k)
                     id_cluster_no = find_key_given_value(clusters, ix)
-                    if id_cluster_no != -1:
+                    if (id_cluster_no != -1):
                         if 1: # phantom handling
-                            if id_cluster_no in mdf_id_list_phantom_id: # phantom is detected since that ID already appeared
+                            if id_cluster_no in mdf_id_list_phantom_id: # phantom is detected since that ID already appeared in the MDF
                                 max_prob_id = mdf_id_dict_phantom_max_prob.get(id_cluster_no, 0) # max prob so far for specific ID
                                 if max_prob_id < mdf_id_all[mdf][k]['prob']: # candidate has greater prob hence it is real and previous is phantom
                                     print("*********  Remove Phantom ID!!! **********", mdf, k, id_cluster_no, max_prob_id, mdf_id_all[mdf][k]['prob'])
@@ -293,7 +304,7 @@ class FaceReId:
                                     if key_phantom == -100: # first time ever
                                         print("BUG mdf_id_dict_id_per_face_key_max_prob was already set")
                                     mdf_id_all[mdf][key_phantom]['id'] = -1 # overwrite with Phantom
-                                    mdf_id_all[mdf][k]['id'] = id_cluster_no
+                                    mdf_id_all[mdf][k]['id'] = id_cluster_no # update dictionary with ID from clustering assigned ID
                                     mdf_id_dict_id_per_face_key_max_prob.update({id_cluster_no: k})
                             else:
                                 mdf_id_all[mdf][k]['id'] = id_cluster_no
@@ -309,22 +320,59 @@ class FaceReId:
 
                         labeled_embed.embed.append(all_embeddings[ix])
                         labeled_embed.label.append(id_cluster_no)
+        print("Only {} [%] of detected faces were classified !!!".format(100*len(labeled_embed.label)/all_embeddings.shape[0]))
+        # post DBSCAN KNN clustering not assigned while prob is high and bbox is sailence
+        if self.recluster_hard_positives:
+            self.reassign_knn(mdf_id_all, clustered_labeled_embed=labeled_embed,
+                              all_embeddings=all_embeddings, id_key_in_mdf=names,
+                              knn=self.re_id_method['min_cluster_size'])
 
-        if 1: # validation code for phantom ID
-            for k, v in mdf_id_all.items():
-                it = list(v.values())
-                mdf_dict_list = list(it)
-                lbls, cs = np.unique([x['id'] for x in mdf_dict_list], return_counts=True)
-                # print(lbls[cs>1][lbls[cs>1]!=-1])
-                multi_same_lbl = lbls[cs > 1][lbls[cs > 1] != -1]
-                if multi_same_lbl.size > 0:
-                    print(multi_same_lbl, k)
-                    print('hueston repetative label in MDF!!!', multi_same_lbl)
-                    for repet in multi_same_lbl:
-                        print(mdf_id_all[k])
+            print("Recluster_hard_positives {} [%] of detected faces were classified !!!".format(100*len(labeled_embed.label)/all_embeddings.shape[0]))
+
+        # validation code for no phantom ID anymore
+        for k, v in mdf_id_all.items():
+            it = list(v.values())
+            mdf_dict_list = list(it)
+            lbls, cs = np.unique([x['id'] for x in mdf_dict_list], return_counts=True)
+            # print(lbls[cs>1][lbls[cs>1]!=-1])
+            multi_same_lbl = lbls[cs > 1][lbls[cs > 1] != -1]
+            if multi_same_lbl.size > 0:
+                print(multi_same_lbl, k)
+                print('hueston repetative label in MDF PHANTOM should be filtered already!!!', multi_same_lbl)
+                for repet in multi_same_lbl:
+                    print(repet)
 
         return mdf_id_all, labeled_embed
     # lbl, c = np.unique([x['id'] for x in list(list(mdf_id_all.values())[0].values())], return_counts=True)   [x for x in list(mdf_id_all.values())]
+    def reassign_knn(self, mdf_id_all, clustered_labeled_embed, all_embeddings, id_key_in_mdf, knn):
+
+        from sklearn.neighbors import NearestNeighbors
+        nbrs = NearestNeighbors(n_neighbors=knn, p=2).fit(np.stack(clustered_labeled_embed.embed))  # knn with the already clustered  : the closiest is the embed itself
+        for mdf, id_v in mdf_id_all.items():
+            for mdf_id_name, id_in_mdf_dict in id_v.items():
+                # post DBSCAN KNN clustering not assigned while prob is high and bbox is sailence
+                if id_in_mdf_dict['prob'] > self.min_prob_hard_pos_reassign and id_in_mdf_dict['id'] == -1:
+                    bbox = id_in_mdf_dict['bbox']
+                    id_box_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+                    if id_box_area > self.min_res_hard_pos_reassign: # high confidence sailence
+                        embed_ix_in_id_key = [ix for ix, x in enumerate(id_key_in_mdf) if mdf_id_name == x][0]
+                        distances, indices = nbrs.kneighbors(all_embeddings[embed_ix_in_id_key].reshape(1, -1))
+                        # K-NN with the relevant labels of the already clustrered embed.
+                        id_in_mdf_knn = [clustered_labeled_embed.label[x] for x in indices[0]]
+                        lbl, c = np.unique(id_in_mdf_knn, return_counts=True)
+                        if c[-1] >= np.ceil(knn/2): # Majority
+                            print("Hard positive in {} classified as {} Voted {} times".format(mdf_id_name, lbl[-1], c[-1]))
+                            mdf_id_all[mdf][mdf_id_name]['id'] = lbl[-1]
+                            clustered_labeled_embed.embed.append(all_embeddings[embed_ix_in_id_key])
+                            clustered_labeled_embed.label.append(lbl[-1])
+
+                        # id_in_mdf_knn = [id_key_in_mdf[x] for x in indices[0]]
+                        # for temp in id_in_mdf_knn:
+                        #     record, id_key, mdf_key = [(val[temp], temp, key) for key, val in mdf_id_all.items() if temp in val][0]
+
+
+        pass
+
     def reid_process_movie(self, path_mdf, result_path_with_movie=None, save_results_to_db=False, **kwargs):
 
         if isinstance(path_mdf, list):# pipeline api
@@ -351,11 +399,13 @@ class FaceReId:
 
         result_path_good_resolution_faces, result_path = create_result_path_folders(self.result_path_with_movie, self.margin,
                                                                                     self.min_face_res,
-                                                                                    self.re_id_method)
+                                                                                    self.re_id_method,
+                                                                                    self.simillarity_metric)
         if save_results_to_db:
             _, re_id_image_file_web_path = create_result_path_folders(re_id_image_file_web_path, self.margin,
                                                                                     self.min_face_res,
-                                                                                    self.re_id_method)
+                                                                                    self.re_id_method,
+                                                                                    self.simillarity_metric)
 
         # plot_fn = self.plot_fn
         all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status = self.extract_faces(path_mdf, result_path_good_resolution_faces)
@@ -373,23 +423,28 @@ class FaceReId:
 
             print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(self.re_id_method['cluster_threshold']))
             result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, self.margin,
-                                                                                        self.min_face_res, self.re_id_method)
+                                                                                        self.min_face_res, self.re_id_method,
+                                                                                        self.simillarity_metric)
 
             if save_results_to_db:
                 _, re_id_image_file_web_path = create_result_path_folders(re_id_image_file_web_path, self.margin,
                                                                           self.min_face_res,
-                                                                          self.re_id_method)
+                                                                          self.re_id_method,
+                                                                          self.simillarity_metric)
 
         mdf_id_all, labeled_embed = self.re_identification(all_embeddings, mtcnn_cropped_image, names,
                                                                 mdf_id_all, result_path, self.simillarity_metric)
 
+        self._check_valid_fields(labeled_embed, mdf_id_all)
+
         if self.re_id_method['method'] == 'dbscan' or self.re_id_method['method'] == 'hdbscan':
-            fname_string = str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_'+ str(self.re_id_method['min_cluster_size'])
+            fname_strind_2nd = ['_recluster' if self.recluster_hard_positives else ''][0]
+            fname_string = str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_' + str(self.re_id_method['min_cluster_size']) + '_dist_' + str(self.simillarity_metric) + fname_strind_2nd
             with open(os.path.join(result_path, 're-id_res_' + fname_string +'.pkl'), 'wb') as f:
                 pickle.dump(mdf_id_all, f)
-            if 1:
-                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'wb') as f1:
-                    pickle.dump(labeled_embed.embed, f1)
+
+            with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'wb') as f1:
+                pickle.dump(labeled_embed.embed, f1)
 
             with open(os.path.join(result_path, 'face-id_embeddings_label_' + fname_string + '.pkl'), 'wb') as f1:
                 pickle.dump(labeled_embed.label, f1)
@@ -408,6 +463,17 @@ class FaceReId:
 
         return status, re_id_result_path, mdf_id_all
 
+    def _check_valid_fields(self, labeled_embed, mdf_id_all):
+        n_ids = 0
+        for mdf, id_v in mdf_id_all.items():
+            for mdf_id_name, id_in_mdf_dict in id_v.items():
+                # post DBSCAN KNN clustering not assigned while prob is high and bbox is sailence
+                if id_in_mdf_dict['id'] != -1:
+                    n_ids += 1
+        assert(len(labeled_embed.label) == n_ids)
+
+        return
+
 
 def calculateMahalanobis(y, inv_covmat, y_mu):
     y_mu = y - y_mu
@@ -418,11 +484,12 @@ def calculateMahalanobis(y, inv_covmat, y_mu):
     mahal = np.dot(left, y_mu.T)
     return mahal.diagonal()
 
-def create_result_path_folders(result_path, margin, min_face_res, re_id_method):
+def create_result_path_folders(result_path, margin, min_face_res, re_id_method, simillarity_metric):
+
     result_path_good_resolution_faces = os.path.join(result_path, 'good_res')
     # result_path = os.path.join(result_path, 'res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_'  + str(args.cluster_threshold)) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_' + str(args.simillarity_metric)
     result_path = os.path.join(result_path, 'method_' + str(re_id_method['method']) +'_res_' + str(min_face_res) + '_margin_' + str(margin) + '_eps_' + str(
-        re_id_method['cluster_threshold'])) + '_KNN_' + str(re_id_method['min_cluster_size'])
+        re_id_method['cluster_threshold'])) + '_KNN_' + str(re_id_method['min_cluster_size']) + '_dist_' + simillarity_metric
 
     if result_path and not os.path.exists(result_path):
         try:
@@ -645,17 +712,18 @@ def main():
     parser.add_argument('--cluster-threshold', type=float, default=0.28, metavar='FLOAT', help="TODO")
     parser.add_argument('--min-cluster-size', type=int, default=5, metavar='INT', help="TODO")
     parser.add_argument('--simillarity-metric', type=str, default='cosine',  # TODO not fully implemented
-                        choices=['cosine', 'euclidean'], metavar='STRING', help='')
+                        choices=['cosine', 'euclidean', 'mahalanobis'], metavar='STRING', help='') # distances https://hdbscan.readthedocs.io/en/latest/basic_hdbscan.html?highlight=distance#what-about-different-metrics
     parser.add_argument('--task', type=str, default='classify_faces', choices=['classify_faces', 'metric_calc', 'embeddings_viz_umap', 'plot_id_over_mdf'],
                         metavar='STRING', help='')
 
     parser.add_argument('--reid-method', type=str, default='dbscan', choices=['dbscan', 'hdbscan'],
                         metavar='STRING', help='')
 
-
-
     parser.add_argument('--plot-fn', action='store_true',
                          help='Plot False negatives over the reID image debug results')
+
+    parser.add_argument('--recluster-hard-positives', action='store_true',
+                        help='recluster-hard-positives by K-NN')
 
     parser.add_argument("--annotation-path", type=str, help="",  default='/home/hanoch/notebooks/nebula3_reid/annotations/LSMDC16_annos_training_onlyIDs_NEW_local.csv')
     
@@ -687,7 +755,8 @@ def main():
                          simillarity_metric=args.simillarity_metric,
                          prob_th_filter_blurr=prob_th_filter_blurr,
                          batch_size=batch_size,
-                         plot_fn=args.plot_fn)
+                         plot_fn=args.plot_fn,
+                         recluster_hard_positives=args.recluster_hard_positives)
 
     print("Settings margin :{} min_face_res{} re_id_method {} simillarity_metric {}".format(face_reid.margin,
                                                                                             face_reid.min_face_res, face_reid.re_id_method, face_reid.simillarity_metric))
@@ -707,8 +776,10 @@ def main():
                                                                                     face_reid.min_face_res,
                                                                                     face_reid.re_id_method)
 
+        fname_strind_2nd = ['_recluster' if face_reid.recluster_hard_positives else ''][0]
+
         fname_string = str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(
-            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size'])
+            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '_dist_' + str(face_reid.simillarity_metric) + fname_strind_2nd
 
         with open(os.path.join(result_path, 're-id_res_' + fname_string + '.pkl'), 'rb') as f:
             mdf_face_id_all = pickle.load(f)
@@ -718,11 +789,13 @@ def main():
     elif args.task == 'embeddings_viz_umap':
         _, result_path = create_result_path_folders(result_path_with_movie, face_reid.margin,
                                                                                 face_reid.min_face_res,
-                                                                                face_reid.re_id_method)
+                                                                                face_reid.re_id_method,
+                                                                                face_reid.simillarity_metric)
         labeled_embed = EmbeddingsCollect()
 
+        fname_strind_2nd = ['_recluster' if face_reid.recluster_hard_positives else ''][0]
         fname_string = str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(
-            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size'])
+            face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '_dist_' + str(face_reid.simillarity_metric) + fname_strind_2nd
 
         with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'rb') as f:
             labeled_embed.embed = pickle.load(f)
@@ -796,7 +869,7 @@ def main():
         # Collect statistics of each ID
         all_centroid = list()
         all_inv_cov = list()
-        test_embed = all_embeddings.cpu().numpy()
+        # test_embed = all_embeddings.cpu().numpy()
         for id_ix in np.sort(np.unique(labeled_embed.label)):
             lbl_ix = np.where([np.array(labeled_embed.label) == id_ix])[1]
             id_embed = [labeled_embed.embed[i] for i in lbl_ix]

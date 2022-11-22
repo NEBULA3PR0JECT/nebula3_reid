@@ -28,7 +28,7 @@ def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
     matrix = matrix.cpu().numpy()
     precomputed = False
 
-    if method == 'hdbscan' and metric == 'cosine':
+    if method == 'hdbscan' and metric == 'cosine': # cosine isn't supported hence should recompute before
         if 0:
             metric = 'euclidean'
         else:
@@ -37,6 +37,10 @@ def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
             metric = 'precomputed'
 
     if method == 'hdbscan':
+        if metric == 'euclidean': # cosine distance isn;t efficient in terms of optimizetion since it doesn;t fullfuill the triangle inequality hence https://github.com/scikit-learn-contrib/hdbscan/issues/69
+            from sklearn.preprocessing import normalize
+            matrix = normalize(matrix, norm='l2')
+
         db = hdbscan.HDBSCAN(algorithm='best', approx_min_span_tree=True,
                 gen_min_span_tree=True, leaf_size=40, # memory=Memory(cachedir=None)
                 metric=metric, min_cluster_size=min_cluster_size, min_samples=None, p=None)  # TODO : try arccos metric

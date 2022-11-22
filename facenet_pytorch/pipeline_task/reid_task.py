@@ -156,29 +156,24 @@ class MyTask(PipelineTask):
 
     def process_movie(self, movie_id: str):  # "Movies/8367628636680745448"
         print(f'handling movie: {movie_id}')
-        if 1:
-            movie_db.get_movie(movie_id)
-            list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id) # Arango DB Query
-            mdfs_urls = [remote_storage.vp_config.WEB_PREFIX + x for x in list_mdfs]
+        movie_db.get_movie(movie_id)
+        list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id) # Arango DB Query
+        mdfs_urls = [remote_storage.vp_config.WEB_PREFIX + x for x in list_mdfs]
 
-            movie_name = os.path.dirname(list_mdfs[0]).split('/')[-1]
-            movie_id_no_database = movie_id.split('/')[-1]
-            result_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH, movie_id_no_database, movie_name)
+        movie_name = os.path.dirname(list_mdfs[0]).split('/')[-1]
+        movie_id_no_database = movie_id.split('/')[-1]
+        result_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH, movie_id_no_database, movie_name)
 
-            if not os.path.exists(result_path):
-                os.makedirs(result_path)
+        if not os.path.exists(result_path):
+            os.makedirs(result_path)
 
-            download_res = [download_image_file(image_url=x, image_location=os.path.join(result_path, os.path.basename(y))) for x, y in zip(mdfs_urls, list_mdfs)]
-            mdfs_local_paths = [os.path.join(result_path, os.path.basename(y)) for y in list_mdfs]
-            print("MDFs downloaded from WEB server : {} ".format(all(download_res)))
-            if not all(download_res):
-                warnings.warn(
-                    "MDF download from WEB server FAIL : exit!!!!")
-                sys.exit()
-        else:
-            dict_tmp = eval(movie_id)
-            if not pilot:
-                list_mdfs = dict_tmp['mdfs_path']
+        download_res = [download_image_file(image_url=x, image_location=os.path.join(result_path, os.path.basename(y))) for x, y in zip(mdfs_urls, list_mdfs)]
+        mdfs_local_paths = [os.path.join(result_path, os.path.basename(y)) for y in list_mdfs]
+        print("MDFs downloaded from WEB server : {} ".format(all(download_res)))
+        if not all(download_res):
+            warnings.warn(
+                "MDF download from WEB server FAIL : exit!!!!")
+            sys.exit()
         tmp_frame_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH_RESULTS_TO_UPLOAD, movie_name)
         re_id_image_file_web_path = WEB_PATH_SAVE_REID
         # Process ReId task
@@ -210,11 +205,16 @@ class MyTask(PipelineTask):
     def get_name(self):
         return "re_id_task"
 
+    def process_movies(self, movie_ids: list, context: str):  # "Movies/8367628636680745448"
+        for movie_id in movie_ids:
+            self.process_movie(movie_id)
+        return
+
 def test_pipeline_task(pipeline_id):
     task = MyTask()
     if pilot:
         pipeline = PipelineApi(None)
-        pipeline.handle_pipeline_task(task, pipeline_id, stop_on_failure=True)
+        pipeline.handle_pipeline_task(task, pipeline_id, stop_on_failure=True)  # HK to support movies read env param that process_by_context=True : a new parametet to the method => process_movies()
     else:
         task.process_movie('Movies/8367628636680745448')#('doc_movie_3132222071598952047')
 # movie_id: "Movies/-3132222071598952047"

@@ -21,7 +21,8 @@ except IOError:
     font = ImageFont.truetype(font_path, size=56)
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7:] # avoid th aliceblue a light white one
 
-min_iou = 0.5
+min_iou_pascal_voc = 0.5
+min_iou = min_iou_pascal_voc
 """
 https://datasets.d2.mpi-inf.mpg.de/movieDescription/protected/grounded_characters/README.txt
 = mat
@@ -237,6 +238,7 @@ def calc_precision_recall():
                 with open(reid_dict_pkl_full_path, 'rb') as f:
                     mdf_face_id_all = pickle.load(f)
                 print("ReId settings", os.path.basename(reid_dict_pkl_full_path))
+
                 # csv load and get setup
                 csv_path = os.path.dirname(reid_dict_pkl_full_path)
                 try:
@@ -248,19 +250,21 @@ def calc_precision_recall():
                 df_res = df_res[1:]  # take the data less the header row
                 df_res.columns = new_header
 
+                annotation_converted_to_dict = dict()
 
                 annots = loadmat(mat_file)
                 n_ids = annots['characters'].shape[0]
                 print("no of characters {}", n_ids)
-                # RECALL : Percentage of GT that appears in frames/MDFs: Go over the GT list find the IOU>0.5 over classified faces bbox
+                # RECALL : Percentage of GT that appears in frames/MDFs: Go over the GT list find the IOU>min_iou_pascal_voc over classified faces bbox
                 # + make sure all classification belongs to the same ID otherwise it is just detection and multiple IDs (hard positives) will not be detected
                 false_negatives = 0
                 true_positives = 0
                 detected_but_not_classified = 0
                 id_annotations = 0
+                gt_id_to_detected_id_map = dict()
                 for id in range(n_ids):# per id in movie over all clips
                     detected_id = list()
-                    print("Character name : {}".format(str(annots['characters'][id][0].item())))
+                    print("Character name : {} No #{}".format(str(annots['characters'][id][0].item()), id))
                     characters2frames_id = annots['characters2frames'][id, :]
                     clip_name_for_id = characters2frames_id[0][0]
                     if clip_name_for_id.size == 0:
@@ -277,18 +281,27 @@ def calc_precision_recall():
                         prop_bbox = np.array([bbox1[0], bbox1[1], bbox1[0] +bbox1[2], bbox1[1] + bbox1[3]])
 
                         frame_fname = str(clip.astype(object)[0]) + '-' + str(frame[0]) + '.jpg'
-                        # Find frmae in detections
+
+                        annotation_converted_fname = annotation_converted_to_dict.get(frame_fname, None)
+                        if annotation_converted_fname:
+                            annotation_converted_fname.update({id: prop_bbox})
+                            annotation_converted_to_dict[frame_fname] = annotation_converted_fname
+                        else:
+                            tmp_d = {id: prop_bbox}
+                            annotation_converted_to_dict.update({frame_fname: tmp_d})
+
+                        # Find frame in detections
                         frame_dict_value = mdf_face_id_all.get(frame_fname, -1)
                         if frame_dict_value == -1:
-                            false_negatives += 1
-                        else:
+                            false_negatives += 1 # since GT has annotations in this frame out of specific clip while no detections
+                        else: # Detections were made over that frame/clip
                             max_iou = 0
                             det_id_in_frame = False
                             for det_ids in list(frame_dict_value.values()):
                                 iou = bb_intersection_over_union(det_ids['bbox'], prop_bbox)
                                 if iou > max_iou:
                                     max_iou = iou
-                                    if iou>0.5:
+                                    if iou>min_iou_pascal_voc:
                                         if det_ids['id'] == -1:
                                             false_negatives += 1
                                             detected_but_not_classified += 1
@@ -300,20 +313,45 @@ def calc_precision_recall():
                                             detected_id.append(det_ids['id'])
                             if not det_id_in_frame:
                                 false_negatives += 1
-
+                    # Validate mapping of dbscan Ids to GT annotations
                     uniqu_id, c = np.unique(detected_id, return_counts=True)
-
+                    if uniqu_id.size > 0:
+                        gt_id_to_detected_id_map.update({uniqu_id[np.argmax(c)]: id}) # in case substitution of id or replicated
                     if uniqu_id.shape[0]>1:
                         warnings.warn("Substitution of IDs :{} times: {}".format(uniqu_id, c))
+
                 recall = true_positives/(true_positives + false_negatives)
+                # now that we have ,mapping gt_id_to_detected_id_map compute precision
+                # FALSE POSITIVE CALC
+                false_positive = 0
+                for frame_number, v in mdf_face_id_all.items():
+                    frame_dict_value = mdf_face_id_all.get(frame_number, None)
+                    if not frame_dict_value: # no face detection at that MDF
+                        continue
+                    for det_ids in list(frame_dict_value.values()):
+                        if det_ids['id'] != -1:
+                            for id_k, v_bbox in annotation_converted_to_dict[frame_number].items():# run over all GT annotations
+                                iou = bb_intersection_over_union(det_ids['bbox'], v_bbox)
+                                if iou > min_iou_pascal_voc:
+                                    map_det_to_gt = gt_id_to_detected_id_map.get(det_ids['id'], None)# overlapping of GT and prediction means but with different IDs means FP of detected ID with other face ID
+                                    if map_det_to_gt:
+                                        if map_det_to_gt != id_k:
+                                            false_positive += 1
+
+                if false_positive + true_positives == 0:
+                    precision = 0
+                else:
+                    precision = true_positives/(false_positive + true_positives)
+
                 res_dict = dict()
-                res_dict.update({'tp': true_positives, 'fn': false_negatives, 'recall': recall, 'detected_but_not_classified ratio': detected_but_not_classified/(id_annotations)})
+                res_dict.update({'tp': true_positives, 'fn': false_negatives, 'recall': recall, 'precision': precision, 'detected_but_not_classified ratio': detected_but_not_classified/(id_annotations)})
                 res_dict.update({'mtcnn_margin': df_res.mtcnn_margin.item(), 'min_face_res': df_res.min_face_res.item(), 'dbscan_eps' : df_res.cluster_threshold.item()})
                 res_dict.update({"min_cluster_size": df_res.min_cluster_size.item(), 'reid_method': df_res.reid_method.item(), 'min_cluster_size': df_res.min_cluster_size.item()})
                 res_dict.update({'video_name': video_name})
 
                 summary_list.append(res_dict)
-                print("ID {} no {} true_positives {}, false_negatives {} recall {} detected_but_not_classified ratio {} ".format(annots['characters'][id][0].item(0), id, true_positives, false_negatives, recall, detected_but_not_classified/(id_annotations)))
+                print("ID {} no {} true_positives {}, false_negatives {} recall {} detected_but_not_classified ratio {} FP: {} Precision {}"
+                      .format(annots['characters'][id][0].item(0), id, true_positives, false_negatives, recall, detected_but_not_classified/(id_annotations), false_positive, precision))
             # PRECISION :
     df = pd.DataFrame(summary_list)
     df.to_csv(os.path.join(detection_path, 'precision_recall.csv'), index=False)
