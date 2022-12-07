@@ -8,7 +8,8 @@ import matplotlib
 color_space = [ImageColor.getrgb(n) for n, c in ImageColor.colormap.items()][7::4] # avoid th aliceblue a light white one
 
 
-detection_path = '/home/hanoch/results/face_reid/face_net'
+# detection_path = '/home/hanoch/results/face_reid/face_net'
+detection_path = '/media/results/face_reid'
 
 pr_recall = pd.read_csv(os.path.join(detection_path, 'precision_recall.csv'), index_col=False)
 

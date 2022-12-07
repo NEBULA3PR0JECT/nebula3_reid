@@ -20,6 +20,7 @@ ftfy==6.1.1
 gdown==4.5.1
 grpcio==1.37.1
 grpcio-tools==1.37.1
+hdbscan==0.8.28
 huggingface-hub==0.9.1
 idna
 imageio==2.21.2
@@ -56,6 +57,7 @@ sacremoses==0.0.53
 scenedetect==0.6.0.3
 scikit-learn==1.1.2
 scipy==1.9.1
+scp==0.14.4
 setuptools-scm==7.0.5
 six
 sklearn==0.0

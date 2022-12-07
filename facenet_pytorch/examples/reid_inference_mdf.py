@@ -30,7 +30,7 @@ import pandas as pd
 import glob
 import subprocess
 # test
-# from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
+##### from nebula3_reid.facenet_pytorch.examples.clustering import dbscan_cluster, _chinese_whispers
 from examples.clustering import hdbscan_dbscan_cluster, _chinese_whispers, hdbscan_cluster
 from facenet_pytorch import MTCNN, InceptionResnetV1, extract_face, fixed_image_standardization
 # from facenet_pytorch.models import mtcnn, inception_resnet_v1
@@ -45,7 +45,7 @@ import warnings
 
 operational_mode = False #False # True:default param
 # @@HK for Ghandi : min_face_res=128 where dense MDF incease filtering otherwise minor characters clutter the face classification
-
+min_ids_per_cluster_sparse_mdf = 2
 
 class EmbeddingsCollect():
     def __init__(self):
@@ -83,7 +83,7 @@ class FaceReId:
     # init method or constructor
     def __init__(self, margin=40, min_face_res=96, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
-                 prob_th_filter_blurr=0.95, batch_size=128, plot_fn=False, recluster_hard_positives=False):
+                 prob_th_filter_blurr=0.95, batch_size=128, id_to_mdf_ratio=5, plot_fn=False, recluster_hard_positives=False):
         self.margin = margin
         self.min_face_res = min_face_res
         self.prob_th_filter_blurr = prob_th_filter_blurr
@@ -96,6 +96,7 @@ class FaceReId:
         # hard positives which are farther away from their cluster
         self.min_prob_hard_pos_reassign = 0.99
         self.min_res_hard_pos_reassign = 256**2
+        self.id_to_mdf_ratio = id_to_mdf_ratio # Sparse MDFs in hollywood2 hence empirically determine the threshold to swithch to sparse mode
 
     # Sample Method
     def extract_faces(self, path_mdf, result_path_good_resolution_faces,
@@ -262,7 +263,7 @@ class FaceReId:
             else: # crash program in case too few MDFs and no IDs found then 1 cluster per ID min_cluster_size=1 is not valid cuz no reID in single ID appearance
                 print("Re run Re-ID : Could not find recurrent ID assume single ID per MDF - minimal min_cluster_size(K-NN)= ceil(min_cluster_size/2) performance not guaranteed!!!")
                 if self.re_id_method['method'] == 'dbscan':
-                    self.re_id_method['min_cluster_size'] = int(1 + self.re_id_method['min_cluster_size']/2)
+                    self.re_id_method['min_cluster_size'] = 1#int(1 + self.re_id_method['min_cluster_size']/2)
                     self.re_id_method['cluster_threshold'] = self.re_id_method[
                                                                  'cluster_threshold'] + self.delta_thr_sparse_mdfs/2
                     self.re_id_method['cluster_threshold'] = float(
@@ -281,9 +282,12 @@ class FaceReId:
                 if clusters:
                     print("Total {} clusters and total appeared IDs {}".format(n_clusters,
                                                 np.concatenate([x[1] for x in clusters.items()]).shape[0]))
+                    # In case too few MDFs then the unclusterd with high likelihood assign successive id  #TODO @@HK : put here a func() go over all MDFs in case sparse MDFs and number any character with ascending numbering
 
         else:
             raise
+
+        single_id_appearance_class_no = n_clusters
         labeled_embed = EmbeddingsCollect()
         # Assign clustering ID to movie dictionary
         for mdf, id_v in mdf_id_all.items():
@@ -320,6 +324,16 @@ class FaceReId:
 
                         labeled_embed.embed.append(all_embeddings[ix])
                         labeled_embed.label.append(id_cluster_no)
+                    else:
+                        if self.re_id_method['min_cluster_size'] == min_ids_per_cluster_sparse_mdf and 0:  # sparse MDFs
+                            mdf_id_all[mdf][k]['id'] = single_id_appearance_class_no
+                            labeled_embed.embed.append(all_embeddings[ix])
+                            labeled_embed.label.append(single_id_appearance_class_no)
+                            single_id_appearance_class_no += 1
+
+        if self.re_id_method['min_cluster_size'] == min_ids_per_cluster_sparse_mdf:  # sparse MDFs
+            print("Added {} single Image ID  ".format(single_id_appearance_class_no-n_clusters-1))
+
         print("Only {} [%] of detected faces were classified !!!".format(100*len(labeled_embed.label)/all_embeddings.shape[0]))
         # post DBSCAN KNN clustering not assigned while prob is high and bbox is sailence
         if self.recluster_hard_positives:
@@ -413,15 +427,14 @@ class FaceReId:
             return True, None, None # have to return Tru otherwise workflow gradient pipeline gen exception
 
         # Sprint #4 too few MDFs
-        id_to_mdf_ratio = 4
         no_mdfs = all_embeddings.shape[0]
-        if no_mdfs < (self.re_id_method['min_cluster_size']*id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
-            self.re_id_method['min_cluster_size'] = int(min(max(no_mdfs / id_to_mdf_ratio, 2), self.re_id_method['min_cluster_size']))
+        if no_mdfs < (self.re_id_method['min_cluster_size']*self.id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
+            self.re_id_method['min_cluster_size'] = min_ids_per_cluster_sparse_mdf # for s5 demo int(min(max(no_mdfs / self.id_to_mdf_ratio, 2), self.re_id_method['min_cluster_size']))
             print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(self.re_id_method['min_cluster_size']))
             self.re_id_method['cluster_threshold'] = self.re_id_method['cluster_threshold'] + self.delta_thr_sparse_mdfs
             self.re_id_method['cluster_threshold'] = float("{:.2f}".format(self.re_id_method['cluster_threshold']))
 
-            print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/decreasing distance = {}".format(self.re_id_method['cluster_threshold']))
+            print("Too few MDFs/Key-frames for robust RE-ID increasing epsilon/distance = {}".format(self.re_id_method['cluster_threshold']))
             result_path_good_resolution_faces, result_path = create_result_path_folders(result_path, self.margin,
                                                                                         self.min_face_res, self.re_id_method,
                                                                                         self.simillarity_metric)
@@ -442,9 +455,9 @@ class FaceReId:
             fname_string = str(self.min_face_res) + '_' + str(self.prob_th_filter_blurr) + '_eps_' + str(self.re_id_method['cluster_threshold']) + '_KNN_' + str(self.re_id_method['min_cluster_size']) + '_dist_' + str(self.simillarity_metric) + fname_strind_2nd
             with open(os.path.join(result_path, 're-id_res_' + fname_string +'.pkl'), 'wb') as f:
                 pickle.dump(mdf_id_all, f)
-
-            with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'wb') as f1:
-                pickle.dump(labeled_embed.embed, f1)
+            if 0: # too much memory not needed now
+                with open(os.path.join(result_path, 'face-id_embeddings_embed_' + fname_string + '.pkl'), 'wb') as f1:
+                    pickle.dump(labeled_embed.embed, f1)
 
             with open(os.path.join(result_path, 'face-id_embeddings_label_' + fname_string + '.pkl'), 'wb') as f1:
                 pickle.dump(labeled_embed.label, f1)
@@ -705,7 +718,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--path-mdf", type=str, help="MVAD dataset path",  default='/home/hanoch/mdf_lsmdc/all')
     parser.add_argument("--movie", type=str, help="MVAD-Names dataset file path", default='0001_American_Beauty')#'3001_21_JUMP_STREET')#default='0001_American_Beauty')
-    parser.add_argument("--result-path", type=str, help="", default='/home/hanoch/results/face_reid/face_net')
+    parser.add_argument("--result-path", type=str, help="", default='/media/results/face_reid')
     parser.add_argument('--batch-size', type=int, default=128, metavar='INT', help="TODO")
     parser.add_argument('--mtcnn-margin', type=int, default=40, metavar='INT', help="TODO")
     parser.add_argument('--min-face-res', type=int, default=64, metavar='INT', help="TODO")
@@ -763,10 +776,13 @@ def main():
     if args.task == 'classify_faces':
         success, re_id_result_path, _ = face_reid.reid_process_movie(path_mdf, result_path_with_movie)
         if re_id_result_path  != None:
+            fname_strind_2nd = ['_recluster' if face_reid.recluster_hard_positives else ''][0]
+            fname_string = str(face_reid.min_face_res) + '_' + str(face_reid.prob_th_filter_blurr) + '_eps_' + str(face_reid.re_id_method['cluster_threshold']) + '_KNN_' + str(face_reid.re_id_method['min_cluster_size']) + '_dist_' + str(face_reid.simillarity_metric) + fname_strind_2nd
+
             import pandas as pd
             df_result = pd.DataFrame.from_dict(list(result_dict.items()))
             df_result = df_result.transpose()
-            df_result.to_csv(os.path.join(os.path.dirname(re_id_result_path), 'setup.csv'), index=False)
+            df_result.to_csv(os.path.join(os.path.dirname(re_id_result_path), 'setup_' + fname_string +'.csv'), index=False)
 
         print("success : ", success)
         return success
@@ -926,6 +942,10 @@ if __name__ == '__main__':
 
 
 """
+--task classify_faces --path-mdf /media/mpii_reid/bbox/frames --task classify_faces --min-face-res 96 --min-cluster-size 5 --movie 1030_Public_Enemies --mtcnn-margin 20 --plot-fn --reid-method dbscan --cluster-threshold 0.27 --recluster-hard-positives
+--task classify_faces --path-mdf /media/mdf_hollywood2/all --task classify_faces --min-face-res 96 --min-cluster-size 5 --movie actioncliptest00007 --mtcnn-margin 40 --plot-fn --reid-method dbscan --cluster-threshold 0.27
+--task classify_faces --path-mdf /media/mdf_hollywood2/all --task classify_faces --min-face-res 96 --min-cluster-size 5 --movie actioncliptest00347 --mtcnn-margin 40 --plot-fn --reid-method dbscan --cluster-threshold 0.27 --result-path /media/results/face_reid/hollywood2
+actioncliptest00007
 --task classify_faces --cluster-threshold 0.26 --min-face-res 128 --min-cluster-size 5 --movie 0011_Gandhi --mtcnn-margin 40
 sprint4
 --path-mdf /media/media/frames --task classify_faces --cluster-threshold 0.27 --min-face-res 64 --min-cluster-size 5 --movie 0001_American_Beauty --mtcnn-margin 40 --result-path /media/media/services

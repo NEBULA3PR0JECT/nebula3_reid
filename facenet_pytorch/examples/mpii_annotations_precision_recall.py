@@ -200,7 +200,8 @@ def calc_precision_recall():
     annotated_frames_mpii_path = '/media/mpii_reid/bbox/frames'
     # result_path = '/home/hanoch/results/face_reid/face_net/mpii'
     annotation_path = '/media/mpii_reid/bbox/mat'
-    detection_path = '/home/hanoch/results/face_reid/face_net'
+    # detection_path = '/home/hanoch/results/face_reid/face_net'
+    detection_path = '/media/results/face_reid'
 
     summary_list = list()
     for data_set in data_sets:
@@ -345,6 +346,7 @@ def calc_precision_recall():
 
                 res_dict = dict()
                 res_dict.update({'tp': true_positives, 'fn': false_negatives, 'recall': recall, 'precision': precision, 'detected_but_not_classified ratio': detected_but_not_classified/(id_annotations)})
+                res_dict.update({'recluster_hard_positives': df_res.recluster_hard_positives})
                 res_dict.update({'mtcnn_margin': df_res.mtcnn_margin.item(), 'min_face_res': df_res.min_face_res.item(), 'dbscan_eps' : df_res.cluster_threshold.item()})
                 res_dict.update({"min_cluster_size": df_res.min_cluster_size.item(), 'reid_method': df_res.reid_method.item(), 'min_cluster_size': df_res.min_cluster_size.item()})
                 res_dict.update({'video_name': video_name})

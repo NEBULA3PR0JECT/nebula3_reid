@@ -69,7 +69,7 @@ def hdbscan_dbscan_cluster(images, matrix, out_dir, cluster_threshold=1,
     print('No of clusters:', no_clusters)
     if no_clusters==0:
         import warnings
-        warnings.warn("No IDs were found too few embeddings per ID > K of K-NN")
+        warnings.warn("No IDs were found, too few embeddings per ID less than K-NN")
     if no_clusters > 0:
         if largest_cluster_only:
             largest_cluster = 0
