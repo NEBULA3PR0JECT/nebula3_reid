@@ -91,7 +91,7 @@ class FaceReId:
         self.batch_size = batch_size
         self.simillarity_metric = simillarity_metric
         self.plot_fn = plot_fn
-        self.delta_thr_sparse_mdfs = 0.2# 0.2# 0.15#0.1 # heuristic
+        self.delta_thr_sparse_mdfs = 0.4 - re_id_method['cluster_threshold']# 0.2# 0.15#0.1 # heuristic  S5 hollywood2
         self.recluster_hard_positives = recluster_hard_positives
         # hard positives which are farther away from their cluster
         self.min_prob_hard_pos_reassign = 0.99
