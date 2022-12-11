@@ -83,7 +83,7 @@ class FaceReId:
     # init method or constructor
     def __init__(self, margin=40, min_face_res=96, re_id_method={'method': 'dbscan', 'cluster_threshold': 0.27, 'min_cluster_size': 5},
                  simillarity_metric='cosine',
-                 prob_th_filter_blurr=0.95, batch_size=128, id_to_mdf_ratio=5, plot_fn=False, recluster_hard_positives=False):
+                 prob_th_filter_blurr=0.95, batch_size=128, id_to_mdf_ratio=10, plot_fn=False, recluster_hard_positives=False):
         self.margin = margin
         self.min_face_res = min_face_res
         self.prob_th_filter_blurr = prob_th_filter_blurr
@@ -331,7 +331,7 @@ class FaceReId:
                             labeled_embed.label.append(single_id_appearance_class_no)
                             single_id_appearance_class_no += 1
 
-        if self.re_id_method['min_cluster_size'] == min_ids_per_cluster_sparse_mdf:  # sparse MDFs
+        if self.re_id_method['min_cluster_size'] == min_ids_per_cluster_sparse_mdf and 0:  # sparse MDFs
             print("Added {} single Image ID  ".format(single_id_appearance_class_no-n_clusters-1))
 
         print("Only {} [%] of detected faces were classified !!!".format(100*len(labeled_embed.label)/all_embeddings.shape[0]))
@@ -427,7 +427,7 @@ class FaceReId:
             return True, None, None # have to return Tru otherwise workflow gradient pipeline gen exception
 
         # Sprint #4 too few MDFs
-        no_mdfs = all_embeddings.shape[0]
+        no_mdfs = len(list(mdf_id_all.values())) # No of effective MDFs
         if no_mdfs < (self.re_id_method['min_cluster_size']*self.id_to_mdf_ratio): # heuristic to determine what is the K-NN in case too few MDFs for sprint#4
             self.re_id_method['min_cluster_size'] = min_ids_per_cluster_sparse_mdf # for s5 demo int(min(max(no_mdfs / self.id_to_mdf_ratio, 2), self.re_id_method['min_cluster_size']))
             print("Too few MDFs/Key-frames for robust RE-ID reducing K-NN = {}".format(self.re_id_method['min_cluster_size']))
@@ -473,7 +473,6 @@ class FaceReId:
         plot_id_over_mdf(mdf_id_all, result_path=re_id_result_path, path_mdf=path_mdf, plot_fn=self.plot_fn)
         # if save_results_to_db:
         #     re_id_image_file_web_path = os.path.join(re_id_image_file_web_path, 're_id')
-
         return status, re_id_result_path, mdf_id_all
 
     def _check_valid_fields(self, labeled_embed, mdf_id_all):

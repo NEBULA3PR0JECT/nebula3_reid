@@ -155,7 +155,11 @@ class MyTask(PipelineTask):
 
         self.face_reid.re_id_method['cluster_threshold'] = os.getenv('REID_CLUSTER_THRESHOLD', self.face_reid.re_id_method['cluster_threshold'])
         self.face_reid.re_id_method['min_cluster_size'] = os.getenv('REID_CLUSTER_SIZE', self.face_reid.re_id_method['min_cluster_size'])
-
+        self.cluster_threshold = self.face_reid.re_id_method['cluster_threshold']
+        self.min_cluster_size = self.face_reid.re_id_method['min_cluster_size']
+    def restart(self):
+        self.face_reid.re_id_method['cluster_threshold'] = self.cluster_threshold
+        self.face_reid.re_id_method['min_cluster_size'] = self.min_cluster_size
 
     def process_movie(self, movie_id: str):  # "Movies/8367628636680745448"
         print(f'handling movie: {movie_id}')
@@ -180,6 +184,7 @@ class MyTask(PipelineTask):
         tmp_frame_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH_RESULTS_TO_UPLOAD, movie_name)
         re_id_image_file_web_path = WEB_PATH_SAVE_REID
         # Process ReId task
+        self.restart()
         success, re_id_result_path, mdf_id_all = self.face_reid.reid_process_movie(path_mdf=mdfs_local_paths,
                                                                                    result_path_with_movie=tmp_frame_path,
                                                                                    save_results_to_db=True,
@@ -277,7 +282,8 @@ go to nebula3_pipeline/sprint4.yaml replace the PIPELINE_ID with the one you got
 remove the sucess field from the pipeine record "videoprocessing": "success" to "videoprocessing": ""
 and 
 "tasks": {} not "tasks": { "videoprocessing": {}}
-Then run : 
+NO!!!!! need to run but just modify the     pipeline_id = os.getenv('PIPELINE_ID')  to the relevant pipeline_id :
+and movie_db.change_db('ipc_200') if needed
 hanoch@psw1a6ce7:~$ gradient workflows run --id cdc9127e-6c61-43b2-95fc-ba3ea1708950 --path nebula3_pipeline/sprint4.yaml
 
   "mdfs_path": [
