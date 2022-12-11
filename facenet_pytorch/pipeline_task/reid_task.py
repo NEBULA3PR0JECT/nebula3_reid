@@ -85,19 +85,22 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
     frames = []
     ix = 0
     for frame_number, v in mdf_id_all.items():
+        mdf_has_id = False
         for reid in list(v.values()):
             if reid['id'] != - 1:
+                mdf_has_id = True
                 frames.append({
                     'frame_number': frame_number,
                     'bbox': reid['bbox'].tolist(),
                     'id': reid['id'],
                     'prob': str(reid['prob'])
                 })
-                url = remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir,
-                                                                               os.path.basename(mdfs_local_dir),
-                                                                               os.path.basename(frame_number))
-                urls.append({'frame_number': frame_number, 'url': web_path[ix]})
-                ix += 1
+                # url = remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir,
+                #                                                                os.path.basename(mdfs_local_dir),
+                #                                                                os.path.basename(frame_number))
+        if mdf_has_id:
+            urls.append({'frame_number': frame_number, 'url': web_path[ix]})
+            ix += 1
 
 
     reid_json = {'movie_id': movie_id, 'frames': frames, 'urls': urls}
@@ -269,6 +272,13 @@ if __name__ == '__main__': #'test':
     test_pipeline_task(pipeline_id)
 
 """"
+To run unitesting
+go to nebula3_pipeline/sprint4.yaml replace the PIPELINE_ID with the one you got from ArangoDB
+remove the sucess field from the pipeine record "videoprocessing": "success" to "videoprocessing": ""
+and 
+"tasks": {} not "tasks": { "videoprocessing": {}}
+Then run : 
+hanoch@psw1a6ce7:~$ gradient workflows run --id cdc9127e-6c61-43b2-95fc-ba3ea1708950 --path nebula3_pipeline/sprint4.yaml
 
   "mdfs_path": [
     "/media/media/frames/2402585/frame0063.jpg",
