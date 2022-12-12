@@ -165,6 +165,9 @@ class MyTask(PipelineTask):
         print(f'handling movie: {movie_id}')
         movie_db.get_movie(movie_id)
         list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id) # Arango DB Query
+        if not(list_mdfs):
+            print("MDF list is empty movie_id : {} !!!" .format(movie_id))
+            warnings.warn("MDF list is empty !!!")
         mdfs_urls = [remote_storage.vp_config.WEB_PREFIX + x for x in list_mdfs]
 
         movie_name = os.path.dirname(list_mdfs[0]).split('/')[-1]
