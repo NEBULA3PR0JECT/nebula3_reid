@@ -265,7 +265,7 @@ doc_movie_3132222071598952047 = {
   "source": "external"
 }
 if __name__ == '__main__': #'test':
-    pipeline_id = 'ca918a50-18e9-41c0-bb5c-3b1b783a3276' #os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
+    pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
     if 1: # TODO uncomment
         if pipeline_id is None:
             warnings.warn(
