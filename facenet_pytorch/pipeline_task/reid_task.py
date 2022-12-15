@@ -15,9 +15,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardi
 from examples.reid_inference_mdf import FaceReId
 from examples.remote_storage_utils import RemoteStorage
 from experts.pipeline.api import *
-from movie.movie_db import MOVIE_DB
+from database.arangodb import NEBULA_DB
 
-movie_db = MOVIE_DB()
+nebula_db = NEBULA_DB()
 # WEB_PREFIX = os.getenv('WEB_PREFIX', 'http://74.82.29.209:9000')
 # DEFAULT_FRAMES_PATH = "/tmp/movie_frames"
 
@@ -51,23 +51,14 @@ save_results_to_db = True
 #         self.db = self.nre.db
 # pipeline = PIPELINE()
 
-def insert_json_to_db(movie_db, combined_json):
+def insert_json_to_db(combined_json, collection_name):
     """
     Inserts a JSON with global & local tokens to the database.
     """
+    res = nebula_db.write_doc_by_key(combined_json, collection_name, overwrite=True, key_list=['movie_id'])
 
-    movie_db.change_db("prodemo")
-    db = movie_db
-
-    query = 'UPSERT { movie_id: @movie_id } \
-            INSERT { movie_id: @movie_id, frames: @frames, urls: @urls} \
-            UPDATE { movie_id: @movie_id, frames: @frames , urls: @urls} \
-            IN  s4_re_id'
-
-    movie_db.db.aql.execute(query, bind_vars=combined_json)
-    print("Successfully inserted to database.")
-
-    return
+    print("Successfully inserted to database. Collection name: {}".format(collection_name))
+    return res
 
 
 def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id):
@@ -157,20 +148,25 @@ class MyTask(PipelineTask):
         self.face_reid.re_id_method['min_cluster_size'] = os.getenv('REID_CLUSTER_SIZE', self.face_reid.re_id_method['min_cluster_size'])
         self.cluster_threshold = self.face_reid.re_id_method['cluster_threshold']
         self.min_cluster_size = self.face_reid.re_id_method['min_cluster_size']
+
+        self.collection_name = 's4_re_id'
+
     def restart(self):
         self.face_reid.re_id_method['cluster_threshold'] = self.cluster_threshold
         self.face_reid.re_id_method['min_cluster_size'] = self.min_cluster_size
 
     def process_movie(self, movie_id: str):  # "Movies/8367628636680745448"
         print(f'handling movie: {movie_id}')
-        movie_db.get_movie(movie_id)
-        list_mdfs = get_mdfs_path(movie_db=movie_db, movie_id=movie_id) # Arango DB Query
+
+        list_mdfs = nebula_db.get_movie_structure(movie_id)
+        list_mdfs = list(list_mdfs.values())
         if not(list_mdfs):
             print("MDF list is empty movie_id : {} !!!" .format(movie_id))
             warnings.warn("MDF list is empty !!!")
         mdfs_urls = [remote_storage.vp_config.WEB_PREFIX + x for x in list_mdfs]
 
         movie_name = os.path.dirname(list_mdfs[0]).split('/')[-1]
+        print("movie_name: {}".format(movie_name))
         movie_id_no_database = movie_id.split('/')[-1]
         result_path = os.path.join(remote_storage.vp_config.LOCAL_FRAMES_PATH, movie_id_no_database, movie_name)
 
@@ -210,7 +206,7 @@ class MyTask(PipelineTask):
 
         if save_results_to_db and mdf_id_all:
             re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
-            insert_json_to_db(movie_db, re_id_json)
+            insert_json_to_db(re_id_json, self.collection_name)
         return success, None
 
     def get_name(self):
@@ -269,7 +265,7 @@ doc_movie_3132222071598952047 = {
   "source": "external"
 }
 if __name__ == '__main__': #'test':
-    pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
+    pipeline_id = 'ca918a50-18e9-41c0-bb5c-3b1b783a3276' #os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
     if 1: # TODO uncomment
         if pipeline_id is None:
             warnings.warn(
