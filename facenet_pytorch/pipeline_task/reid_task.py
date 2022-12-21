@@ -126,16 +126,16 @@ def download_image_file(image_url, image_location=None, remove_prev=True):
 import subprocess
 def merge_mdf_with_reid(mdfs_local_paths, re_id_result_path):
     re_id_files = os.listdir(re_id_result_path)
-    for mdf in mdfs_local_paths:
-        if not any([os.path.splitext(os.path.basename(mdf))[0] in re_id_file for re_id_file in re_id_files]):
-            if re_id_result_path:
+    if re_id_result_path:
+        for mdf in mdfs_local_paths:
+            if not any([os.path.splitext(os.path.basename(mdf))[0] in re_id_file for re_id_file in re_id_files]):
                 frame_full_path = subprocess.getoutput('cp -p ' + mdf + ' ' + re_id_result_path)
                 if frame_full_path != '':
                     warnings.warn('Could not copy MDF file to r_id temp folder')
                     print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
-            else:
-                warnings.warn('Could not copy MDF file to No r_id temp folder')
-                print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
+    else:
+        warnings.warn('Could not copy MDF file to No r_id temp folder')
+        print('Could not copy MDF files to r_id temp folder to {}'.format(re_id_result_path))
 
     return re_id_result_path
 
@@ -197,9 +197,10 @@ class MyTask(PipelineTask):
         if interleave_non_re_id_mdf:
             re_id_result_path = merge_mdf_with_reid(mdfs_local_paths, re_id_result_path)
 
-        web_path = remote_storage.save_re_id_mdf_to_web_n_create_remote_path(re_id_result_path,
-                                                                             re_id_mdfs_web_dir,
-                                                                             re_id_mdfs_remote_web_dir)
+        if re_id_result_path: # in case no faces no re_id images to copy at all
+            web_path = remote_storage.save_re_id_mdf_to_web_n_create_remote_path(re_id_result_path,
+                                                                                 re_id_mdfs_web_dir,
+                                                                                 re_id_mdfs_remote_web_dir)
 
         if save_results_to_db and mdf_id_all:
             re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
