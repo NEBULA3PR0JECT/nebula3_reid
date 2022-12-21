@@ -16,7 +16,7 @@ from examples.reid_inference_mdf import FaceReId
 from examples.remote_storage_utils import RemoteStorage
 from experts.pipeline.api import *
 from database.arangodb import NEBULA_DB
-
+import re
 nebula_db = NEBULA_DB()
 # WEB_PREFIX = os.getenv('WEB_PREFIX', 'http://74.82.29.209:9000')
 # DEFAULT_FRAMES_PATH = "/tmp/movie_frames"
@@ -58,12 +58,15 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
     frames = []
     ix = 0
     for frame_number, v in mdf_id_all.items():
+        frame_number = [int(re.sub('\D', '', frame_number.split('.')[0])) if frame_number.lower().endswith(
+                                ('.png', '.jpg', '.jpeg')) else frame_number][0]
+
         mdf_has_id = False
+        nested_dict = list()
         for reid in list(v.values()):
             if reid['id'] != - 1:
                 mdf_has_id = True
-                frames.append({
-                    'frame_num': frame_number,
+                nested_dict.append({
                     'bbox': reid['bbox'].tolist(),
                     'id': reid['id'],
                     'prob': str(reid['prob'])
@@ -72,6 +75,7 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
                 #                                                                os.path.basename(mdfs_local_dir),
                 #                                                                os.path.basename(frame_number))
         if mdf_has_id:
+            frames.append({'frame_num': frame_number, "re-id": nested_dict})
             urls.append({'frame_number': frame_number, 'url': web_path[ix]})
             ix += 1
 
@@ -124,10 +128,15 @@ def merge_mdf_with_reid(mdfs_local_paths, re_id_result_path):
     re_id_files = os.listdir(re_id_result_path)
     for mdf in mdfs_local_paths:
         if not any([os.path.splitext(os.path.basename(mdf))[0] in re_id_file for re_id_file in re_id_files]):
-            frame_full_path = subprocess.getoutput('cp -p ' + mdf + ' ' + re_id_result_path)
-            if frame_full_path != '':
-                warnings.warn('Could not copy MDF file to r_id temp folder')
+            if re_id_result_path:
+                frame_full_path = subprocess.getoutput('cp -p ' + mdf + ' ' + re_id_result_path)
+                if frame_full_path != '':
+                    warnings.warn('Could not copy MDF file to r_id temp folder')
+                    print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
+            else:
+                warnings.warn('Could not copy MDF file to No r_id temp folder')
                 print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
+
     return re_id_result_path
 
 class MyTask(PipelineTask):
@@ -211,49 +220,10 @@ def test_pipeline_task(pipeline_id):
         pipeline = PipelineApi(None)
         pipeline.handle_pipeline_task(task, pipeline_id, stop_on_failure=True)  # nebula_db.change_db('prodemo') pipeline.config.ARANGO_DB='prodemo' pipeline.movie_db.change_db('prodemo')
     else:
-        task.process_movie('Movies/8367628636680745448')#('doc_movie_3132222071598952047')
-# movie_id: "Movies/-3132222071598952047"
+        task.process_movie('Movies/8367628636680745448')
 
-doc_movie_3132222071598952047 = {
-  "name": "2402585",
-  "url_path": "http://74.82.29.209:9000/datasets/media/movies/2402585.mp4",
-  "orig_url": "http://74.82.29.209:9000/msrvtt/video8135.mp4",
-  "scenes": [],
-  "scene_elements": [
-    [
-      0,
-      449
-    ]
-  ],
-  "mdfs": [
-    [
-      346,
-      125,
-      63
-    ]
-  ],
-  "mdfs_path": [
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.00.51.926-00.00.54.129_clipmdf_0034.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.00.56.224-00.01.03.394_clipmdf_0050.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.00.56.224-00.01.03.394_clipmdf_0124.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.01.43.985-00.01.48.384_clipmdf_0097.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.06.13.870-00.06.16.291_clipmdf_0045.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.06.23.477-00.06.24.326_clipmdf_0039.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.06.30.298-00.06.32.185_clipmdf_0011.jpg",
-        "/media/media/frames/0001_American_Beauty/0001_American_Beauty_00.08.11.990-00.08.14.310_clipmdf_0045.jpg",
-
-
-  ],
-  "meta": {
-    "fps": 29.97002997002997,
-    "width": 320,
-    "height": 240
-  },
-  "updates": 1,
-  "source": "external"
-}
 if __name__ == '__main__': #'test':
-    pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'#pipeline_id = '716074cf-605f-407d-8d33-c675805cce4a'
+    pipeline_id = os.getenv('PIPELINE_ID')
     if pipeline_id is None:
         warnings.warn(
             "PIPELINE_ID does not exist, exit!!!!")
@@ -267,7 +237,7 @@ To debug an already pipeline ID
 remove the success field from the pipeine record "videoprocessing": "success" to "videoprocessing": ""
 and 
 "tasks": {} not "tasks": { "videoprocessing": {}}
-NO!!!!! need to run but just modify the     pipeline_id = os.getenv('PIPELINE_ID')  to the relevant pipeline_id :
+NO!!!!! need to run but just modify the     pipeline_id = os.getenv('PIPELINE_ID')  to the relevant pipeline_id : # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'#pipeline_id = '716074cf-605f-407d-8d33-c675805cce4a'
 Run the following before pipeline.handle_pipeline_task() invoked in case want to change Db from ipc_200  ('ipc_200') if needed
 
 nebula_db.change_db('prodemo')
