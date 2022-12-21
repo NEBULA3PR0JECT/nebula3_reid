@@ -2,7 +2,7 @@ from os import getenv
 import os
 from paramiko import SSHClient, AutoAddPolicy
 from scp import SCPClient
-
+import re
 
 class VideoProcessingConf:
     def __init__(self) -> None:
@@ -58,11 +58,24 @@ class RemoteStorage():
             return False
         return True
 
-    def save_re_id_mdf_to_web(self, mdfs_local_dir, mdfs_web_dir):
-        # mdfs_web_dir = f'{self.vp_config.get_frames_path()}/{process_movie_param.movie_id}'
-        # mdfs_local_dir = f'{self.vp_config.get_local_frames_path()}/{process_movie_param.movie_id}'
+    def save_re_id_mdf_to_web_n_create_remote_path(self, re_id_result_path, re_id_mdfs_web_dir,
+                                                   re_id_mdfs_remote_web_dir):
         uploads = {
-            mdfs_local_dir: mdfs_web_dir
+            re_id_result_path: re_id_mdfs_web_dir
         }
         self.upload_files_to_web(uploads)
+
+        mdf_filenames = [os.path.join(re_id_result_path, x) for x in os.listdir(re_id_result_path)
+                     if x.endswith('png') or x.endswith('jpg')]
+
+        mdf_filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+        web_path = list()
+        for mdf_file in mdf_filenames:
+            web_path.append(re_id_mdfs_remote_web_dir + os.path.join(re_id_mdfs_web_dir, os.path.basename(re_id_result_path), os.path.basename(mdf_file)))
+            print("Web path for ReID MDF: {}".format(web_path[-1]))
+            # print(remote_storage.vp_config.get_web_prefix() + os.path.join(re_id_mdfs_web_dir, os.path.basename(re_id_result_path), os.path.basename(file)))
+        # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
+        # task actual work
+
+        return web_path
 

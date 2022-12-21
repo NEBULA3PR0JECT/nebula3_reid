@@ -121,15 +121,52 @@ class FaceReId:
             print("FaceNet output is post process : fixed_image_standardization")
 
         keep_all = True  # HK revert
+        
+        model_latest = False #latest model from vggface2 SeNet50_256 not having good clustering result
+        if model_latest:
+            image_size = 224
+        else:
+            image_size = 160 # Basic for the FaceNEt to be trained over
 
-        save_images = True
-        # post_process=True => fixed_image_standardization
+        # post_process=True => fixed_image_standardization : (image_tensor - 127.5) / 128.0 = > and hence the cropped face is restandarized to be ready for the next NN
         mtcnn = MTCNN(
-            image_size=160, margin=self.margin, min_face_size=self.min_face_res,
+            image_size=image_size, margin=self.margin, min_face_size=self.min_face_res,
             thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, keep_all=keep_all,
             device=device)  # post_process=False
         # Modify model to VGGFace based and resnet
-        resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)  # TODO
+        if model_latest:
+            sys.path.append(
+                '/home/hanoch/notebooks/nebula3_reid/Automated_Face_Tracking_and_Labelling')  # ID_discriminator.py
+            from Automated_Face_Tracking_and_Labelling.models.ID_discriminator import senet50_256
+            model = senet50_256(weights_path='senet50_256_pytorch.pth').eval().to(device)
+        # MTCNN image_size should be 224*224
+        #     Consider preprocessing with the method but it does normalization inside assuming non normalized face patch which is in contrast to MTCNN output /
+        #     : https://github.com/Andrew-Brown1/Automated_Face_Tracking_and_Labelling/blob/9c094170117837ec0c919ae4b65b83105b1f1908/models/model_datasets.py#L156
+        else:
+            model = InceptionResnetV1(pretrained='vggface2').eval().to(device)  # TODO
+        """
+        Try zisserman/Andrew-Brown : new model VGGFACE2 model based on SE-ResNet  https://github.com/ox-vgg/vgg_face2#pre-processing https://github.com/Andrew-Brown1/Automated_Face_Tracking_and_Labelling
+        
+        pip install -U --no-cache-dir gdown --pre
+        
+        url = 'https://drive.google.com/u/0/uc?id=1zQep6lsG2SS39sj0fJmkji07A_tl2v44&export=download'
+        output = 'model.pth'
+        gdown.download(url, output)
+        
+      
+        
+        import imp
+        import torch
+
+        MainModel = imp.load_source('MainModel', 'senet50_256_pytorch.py')
+        model = torch.load('senet50_256_pytorch.pth')
+        random_feat = model(torch.randn(1, 3, 224, 224))
+        print(random_feat.squeeze().size())
+        
+        sys.path.append('/home/hanoch/notebooks/nebula3_reid/Automated_Face_Tracking_and_Labelling') #ID_discriminator.py
+        from Automated_Face_Tracking_and_Labelling.models.ID_discriminator import senet50_256
+        model = senet50_256(weights_path='senet50_256_pytorch.pth')        
+        """
 
         aligned = list()
         names = list()
@@ -222,7 +259,7 @@ class FaceReId:
             return None, None, None, None, status
 
         all_embeddings = facenet_embeddings(aligned, self.batch_size,
-                                            image_size=mtcnn.image_size, device=device, neural_net=resnet)
+                                            image_size=mtcnn.image_size, device=device, neural_net=model)
 
         return all_embeddings, mtcnn_cropped_image, names, mdf_id_all, status
         # embeddings = resnet(aligned).detach().cpu()
@@ -394,7 +431,7 @@ class FaceReId:
 
         if not (os.path.exists(path_mdf)):
             warnings.warn(
-                "MDF path {} does not exist !!!! ".format(path_mdf))
+                "MDF path {} does not exist !!!! R U sure you've mounted the dataset".format(path_mdf))
             status = False
             return status, None, None
 

@@ -28,28 +28,10 @@ WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID', remote_storage.vp_config.WE
 
 pilot = True #True  # False # till pipeline will be python3.8
 save_results_to_db = True
+interleave_non_re_id_mdf = True
 # Read the reId from web server
 # http://74.82.29.209:9000//datasets/media/services/0001_American_Beauty/res_64_margin_40_eps_0.27_KNN_5/re_id/re-id_0001_American_Beauty_00.00.51.926-00.00.54.129_clipmdf_0034.jpg
 
-# sys.path.insert(0, "/notebooks/")
-# # sys.path.insert(0, './')
-# sys.path.insert(0, 'nebula3_database/')
-# sys.path.append("/notebooks/nebula3_database")
-# from nebula3_database.config import NEBULA_CONF
-# from nebula3_database.database.arangodb import DatabaseConnector
-# from nebula3_database.database.arangodb import DatabaseConnector
-
-# class PIPELINE:
-#     def __init__(self):
-#         self.config = NEBULA_CONF()
-#         self.db_host = self.config.get_database_host()
-#         self.database = self.config.get_playground_name()
-#         self.gdb = DatabaseConnector()
-#         self.db = self.gdb.connect_db(self.database)
-#         self.nre = MOVIE_DB()
-#         self.nre.change_db("prodemo")
-#         self.db = self.nre.db
-# pipeline = PIPELINE()
 
 def insert_json_to_db(combined_json, collection_name):
     """
@@ -66,11 +48,11 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
 
     # remote_storage = RemoteStorage()
     # from abc import ABC, abstractmethod
-    WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID',
-                                   remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')  # access ReID MDFs from Web address
-
-    mdfs_local_dir = re_id_result_path
-    mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
+    # WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID',
+    #                                remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')  # access ReID MDFs from Web address
+    #
+    # mdfs_local_dir = re_id_result_path
+    # mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
     urls = list()
 
     frames = []
@@ -81,7 +63,7 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
             if reid['id'] != - 1:
                 mdf_has_id = True
                 frames.append({
-                    'frame_number': frame_number,
+                    'frame_num': frame_number,
                     'bbox': reid['bbox'].tolist(),
                     'id': reid['id'],
                     'prob': str(reid['prob'])
@@ -137,6 +119,17 @@ def download_image_file(image_url, image_location=None, remove_prev=True):
         print(f'An exception occurred while fetching {url_link}')
     return result, image_location
 
+import subprocess
+def merge_mdf_with_reid(mdfs_local_paths, re_id_result_path):
+    re_id_files = os.listdir(re_id_result_path)
+    for mdf in mdfs_local_paths:
+        if not any([os.path.splitext(os.path.basename(mdf))[0] in re_id_file for re_id_file in re_id_files]):
+            frame_full_path = subprocess.getoutput('cp -p ' + mdf + ' ' + re_id_result_path)
+            if frame_full_path != '':
+                warnings.warn('Could not copy MDF file to r_id temp folder')
+                print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
+    return re_id_result_path
+
 class MyTask(PipelineTask):
     def __init__(self, *args, **kwargs):
         self.face_reid = FaceReId()
@@ -189,20 +182,15 @@ class MyTask(PipelineTask):
                                                                                    save_results_to_db=True,
                                                                                    re_id_image_file_web_path=re_id_image_file_web_path)
 
-        mdfs_local_dir = re_id_result_path#f'{remote_storage.vp_config.get_local_frames_path()}/{movie_name}'
-        mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
-        remote_storage.save_re_id_mdf_to_web(mdfs_local_dir, mdfs_web_dir)
+        # re_id_result_path = re_id_result_path#f'{remote_storage.vp_config.get_local_frames_path()}/{movie_name}'
+        re_id_mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
+        re_id_mdfs_remote_web_dir = remote_storage.vp_config.get_web_prefix()
+        if interleave_non_re_id_mdf:
+            re_id_result_path = merge_mdf_with_reid(mdfs_local_paths, re_id_result_path)
 
-        mdf_filenames = [os.path.join(mdfs_local_dir, x) for x in os.listdir(mdfs_local_dir)
-                     if x.endswith('png') or x.endswith('jpg')]
-
-        web_path = list()
-        for mdf_file in mdf_filenames:
-            web_path.append(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(mdf_file)))
-            print("Web path for ReID MDF: {}".format(web_path[-1]))
-            # print(remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir, os.path.basename(mdfs_local_dir), os.path.basename(file)))
-        # TODO write to DB like in https://github.com/NEBULA3PR0JECT/visual_clues/blob/ad9039ae3d3ee039a03acbba668bc316664359e5/run_visual_clues.py#L60
-        # task actual work
+        web_path = remote_storage.save_re_id_mdf_to_web_n_create_remote_path(re_id_result_path,
+                                                                             re_id_mdfs_web_dir,
+                                                                             re_id_mdfs_remote_web_dir)
 
         if save_results_to_db and mdf_id_all:
             re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
@@ -221,7 +209,7 @@ def test_pipeline_task(pipeline_id):
     task = MyTask()
     if pilot:
         pipeline = PipelineApi(None)
-        pipeline.handle_pipeline_task(task, pipeline_id, stop_on_failure=True)  # HK to support movies read env param that process_by_context=True : a new parametet to the method => process_movies()
+        pipeline.handle_pipeline_task(task, pipeline_id, stop_on_failure=True)  # nebula_db.change_db('prodemo') pipeline.config.ARANGO_DB='prodemo' pipeline.movie_db.change_db('prodemo')
     else:
         task.process_movie('Movies/8367628636680745448')#('doc_movie_3132222071598952047')
 # movie_id: "Movies/-3132222071598952047"
@@ -265,24 +253,28 @@ doc_movie_3132222071598952047 = {
   "source": "external"
 }
 if __name__ == '__main__': #'test':
-    pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'
-    if 1: # TODO uncomment
-        if pipeline_id is None:
-            warnings.warn(
-                "PIPELINE_ID does not exist, exit!!!!")
-            sys.exit()
-    else:
-        pipeline_id = '72160aa5-c096-4fb2-8874-92ffdedd028f'#'72160aa5-c096-4fb2-8874-92ffdedd028f'#'8fae7dfb-b091-47f3-81e4-d78ebaf844b3'#'45f4739b-146a-4ae3-9d06-16dee5df6ca7'
+    pipeline_id = os.getenv('PIPELINE_ID') # '45f4739b-146a-4ae3-9d06-16dee5df6ca7'#pipeline_id = '716074cf-605f-407d-8d33-c675805cce4a'
+    if pipeline_id is None:
+        warnings.warn(
+            "PIPELINE_ID does not exist, exit!!!!")
+        sys.exit()
     test_pipeline_task(pipeline_id)
 
 """"
 To run unitesting
-go to nebula3_pipeline/sprint4.yaml replace the PIPELINE_ID with the one you got from ArangoDB
-remove the sucess field from the pipeine record "videoprocessing": "success" to "videoprocessing": ""
+In case running all workflow : go to nebula3_pipeline/sprint4.yaml replace the PIPELINE_ID with the one you got from ArangoDB
+To debug an already pipeline ID 
+remove the success field from the pipeine record "videoprocessing": "success" to "videoprocessing": ""
 and 
 "tasks": {} not "tasks": { "videoprocessing": {}}
 NO!!!!! need to run but just modify the     pipeline_id = os.getenv('PIPELINE_ID')  to the relevant pipeline_id :
-and movie_db.change_db('ipc_200') if needed
+Run the following before pipeline.handle_pipeline_task() invoked in case want to change Db from ipc_200  ('ipc_200') if needed
+
+nebula_db.change_db('prodemo')
+pipeline.config.ARANGO_DB='prodemo'
+pipeline.movie_db.change_db('prodemo')
+
+
 hanoch@psw1a6ce7:~$ gradient workflows run --id cdc9127e-6c61-43b2-95fc-ba3ea1708950 --path nebula3_pipeline/sprint4.yaml
 
   "mdfs_path": [
