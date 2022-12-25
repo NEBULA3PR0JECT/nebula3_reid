@@ -43,6 +43,8 @@ def insert_json_to_db(combined_json, collection_name):
     return res
 
 
+
+
 def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id):
     # from examples.remote_storage_utils import RemoteStorage
 
@@ -53,8 +55,65 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
     #
     # mdfs_local_dir = re_id_result_path
     # mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
-    urls = list()
 
+    union_mdf_filenames = [os.path.join(re_id_result_path, x) for x in os.listdir(re_id_result_path)
+                     if x.endswith('png') or x.endswith('jpg')]
+
+    union_mdf_filenames.sort(key=lambda f: int(re.sub('\D', '', f)))
+
+    urls = list()
+    frames = []
+    ix = 0
+    for frame_number in union_mdf_filenames:
+        base_file_name = os.path.basename(frame_number)
+
+        v = None
+        if 're-id' in base_file_name:
+            v = mdf_id_all.get(base_file_name.split('re-id_')[-1], None)
+            if not (v):
+                print('could not copy re id image to web path {}'.format(base_file_name))
+
+        frame_num = [int(re.sub('\D', '', base_file_name.split('.')[0])) if base_file_name.lower().endswith(
+                                ('.png', '.jpg', '.jpeg')) else base_file_name][0]
+
+        if v:
+            mdf_has_id = False
+            nested_dict = list()
+            for reid in list(v.values()):
+                if reid['id'] != - 1:
+                    mdf_has_id = True
+                    nested_dict.append({
+                        'bbox': reid['bbox'].tolist(),
+                        'id': reid['id'],
+                        'prob': str(reid['prob'])
+                    })
+                    # url = remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir,
+                    #                                                                os.path.basename(mdfs_local_dir),
+                    #                                                                os.path.basename(frame_number))
+            if mdf_has_id:
+                frames.append({'frame_num': frame_num, "re-id": nested_dict})
+            urls.append({'frame_num': frame_num, 'url': web_path[ix]})
+            ix += 1
+        else:
+            urls.append({'frame_num': frame_num, 'url': web_path[ix]})
+            ix += 1
+
+    reid_json = {'movie_id': movie_id, 'frames': frames, 'urls': urls}
+    return reid_json
+
+def create_re_id_json_old(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id):
+    # from examples.remote_storage_utils import RemoteStorage
+
+    # remote_storage = RemoteStorage()
+    # from abc import ABC, abstractmethod
+    # WEB_PATH_SAVE_REID = os.getenv('WEB_PATH_SAVE_REID',
+    #                                remote_storage.vp_config.WEB_PREFIX + '//datasets/media/services')  # access ReID MDFs from Web address
+    #
+    # mdfs_local_dir = re_id_result_path
+    # mdfs_web_dir = f'{remote_storage.vp_config.get_frames_path()}/{movie_name}'
+
+
+    urls = list()
     frames = []
     ix = 0
     for frame_number, v in mdf_id_all.items():
@@ -133,9 +192,10 @@ def merge_mdf_with_reid(mdfs_local_paths, re_id_result_path):
                 if frame_full_path != '':
                     warnings.warn('Could not copy MDF file to r_id temp folder')
                     print('Could not copy MDF {} file to r_id temp folder to {}'.format(mdf, re_id_result_path))
-    else:
-        warnings.warn('Could not copy MDF file to No r_id temp folder')
-        print('Could not copy MDF files to r_id temp folder to {}'.format(re_id_result_path))
+    else: # take the non-reid images which are actually the original MDF ones
+        re_id_result_path = os.path.dirname(mdfs_local_paths[0])
+        # warnings.warn('Could not copy MDF file to No r_id temp folder')
+        # print('Could not copy MDF files to r_id temp folder to {}'.format(re_id_result_path))
 
     return re_id_result_path
 
@@ -204,6 +264,20 @@ class MyTask(PipelineTask):
 
         if save_results_to_db and mdf_id_all:
             re_id_json = create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie_id)
+        # elif interleave_non_re_id_mdf and not mdf_id_all: # in case mdf_id_all is empty and no ReID
+        #     re_id_result_path = mdfs_local_paths[0]
+        #     if re_id_result_path:
+        #         if not isinstance(re_id_result_path, list):
+        #             re_id_result_path = [re_id_result_path]
+        #         urls = list()
+        #         for ix, frame_number in enumerate(re_id_result_path):
+        #             frame_number = os.path.basename(frame_number)
+        #             frame_number = [int(re.sub('\D', '', frame_number.split('.')[0])) if frame_number.lower().endswith(
+        #                 ('.png', '.jpg', '.jpeg')) else frame_number][0]
+        #
+        #             urls.append({'frame_number': frame_number, 'url': web_path[ix]})
+        #             reid_json = {'movie_id': movie_id, 'urls': urls}
+
             insert_json_to_db(re_id_json, self.collection_name)
         return success, None
 

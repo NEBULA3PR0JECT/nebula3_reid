@@ -253,8 +253,6 @@ class FaceReId:
         assert (a == len(names)) # should be complied
 
         if aligned == []:
-            warnings.warn(
-                "No faces have been found in any of MDFs !!!! ")
             print("No faces have been found in any of MDFs !!!! ")
             status = False
             return None, None, None, None, status
