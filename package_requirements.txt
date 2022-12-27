@@ -1,2 +1,2 @@
-nebula3-database
-nebula3-experts
+nebula3-database==0.2.19
+nebula3-experts==1.4.2
