@@ -79,6 +79,7 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
         if v:
             mdf_has_id = False
             nested_dict = list()
+            face_only_no_reid_dict = list()
             for reid in list(v.values()):
                 if reid['id'] != - 1:
                     mdf_has_id = True
@@ -87,11 +88,20 @@ def create_re_id_json(mdf_id_all, re_id_result_path, movie_name, web_path, movie
                         'id': reid['id'],
                         'prob': str(reid['prob'])
                     })
+                else:
+                    face_only_no_reid_dict.append({
+                        'bbox': reid['bbox'].tolist(),
+                        'prob': str(reid['prob'])
+                    })
+
                     # url = remote_storage.vp_config.get_web_prefix() + os.path.join(mdfs_web_dir,
                     #                                                                os.path.basename(mdfs_local_dir),
                     #                                                                os.path.basename(frame_number))
             if mdf_has_id:
-                frames.append({'frame_num': frame_num, "re-id": nested_dict})
+                frames.append({'frame_num': frame_num, "re-id": nested_dict, "face_no_id": face_only_no_reid_dict})
+            # if face_only_no_reid_dict:
+            #     frames.append({'frame_num': frame_num, "face_no_id": face_only_no_reid_dict})
+
             urls.append({'frame_num': frame_num, 'url': web_path[ix]})
             ix += 1
         else:
