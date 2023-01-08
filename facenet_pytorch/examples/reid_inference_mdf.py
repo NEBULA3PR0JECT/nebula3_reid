@@ -205,7 +205,7 @@ class FaceReId:
                     x_aligned = x_aligned.unsqueeze(0)
                     prob = np.array([prob])
                 for crop_inx in range(x_aligned.shape[0]):
-                    if prob[crop_inx] > self.prob_th_filter_blurr:
+                    if prob[crop_inx] > self.prob_th_filter_blurr: # TODO since MTCNN doesn;t filter according to min_size add condition any([(x[2] - x[0] >self.min_face_res and x[3] - x[1]>self.min_face_res) for x in batch_boxes])
                         face_tens = x_aligned[crop_inx, :, :, :].squeeze().permute(1, 2, 0).cpu().numpy()
                         face_bb_resolution = 'res_ok'
                         # for p in lanmarks_points:
@@ -484,7 +484,7 @@ class FaceReId:
         mdf_id_all, labeled_embed = self.re_identification(all_embeddings, mtcnn_cropped_image, names,
                                                                 mdf_id_all, result_path, self.simillarity_metric)
 
-        self._check_valid_fields(labeled_embed, mdf_id_all)
+        # self._check_valid_fields(labeled_embed, mdf_id_all) # When phantom appears embeddings should be removed from list check if necessary
 
         if self.re_id_method['method'] == 'dbscan' or self.re_id_method['method'] == 'hdbscan':
             fname_strind_2nd = ['_recluster' if self.recluster_hard_positives else ''][0]
